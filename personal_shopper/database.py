@@ -9,7 +9,12 @@ logger.setLevel(logging.INFO)
 
 class CustomerDatabase:
     def __init__(self, db_path: str = None):
-        """Initialize the customer database."""
+        """Initialize the customer database.
+        
+        Args:
+            db_path (str, optional): Path to the SQLite database file. If None, creates a default
+                database file named 'customer_data.db' in the same directory as this file.
+        """
         if db_path is None:
             # Use a default path in the same directory as this file
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +24,14 @@ class CustomerDatabase:
         self._initialize_db()
     
     def _initialize_db(self):
-        """Create the database and tables if they don't exist."""
+        """Create the database and tables if they don't exist.
+        
+        Creates two tables:
+        - customers: Stores customer information (id, first_name, last_name, created_at)
+        - orders: Stores order information (id, customer_id, order_details, order_date)
+        
+        The orders table has a foreign key relationship with the customers table.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -49,7 +61,18 @@ class CustomerDatabase:
         logger.info(f"Database initialized at {self.db_path}")
     
     def get_or_create_customer(self, first_name: str, last_name: str) -> int:
-        """Get a customer by name or create if not exists. Returns customer ID."""
+        """Get a customer by name or create if not exists.
+        
+        Args:
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            int: The customer's ID (either existing or newly created)
+            
+        Note:
+            If a customer with the given name doesn't exist, a new customer record is created.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -77,7 +100,19 @@ class CustomerDatabase:
         return customer_id
     
     def add_order(self, customer_id: int, order_details: Dict[str, Any]) -> int:
-        """Add a new order for a customer. Returns order ID."""
+        """Add a new order for a customer.
+        
+        Args:
+            customer_id (int): The ID of the customer placing the order
+            order_details (Dict[str, Any]): A dictionary containing the order details.
+                Expected to include at least an 'items' list with item details.
+                
+        Returns:
+            int: The ID of the newly created order
+            
+        Note:
+            The order_details dictionary is stored as a JSON string in the database.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -97,7 +132,21 @@ class CustomerDatabase:
         return order_id
     
     def get_customer_orders(self, customer_id: int) -> List[Dict[str, Any]]:
-        """Get all orders for a customer."""
+        """Get all orders for a customer.
+        
+        Args:
+            customer_id (int): The ID of the customer whose orders to retrieve
+            
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries containing order information.
+                Each dictionary includes:
+                - id: The order ID
+                - date: The order date
+                - details: The order details (parsed from JSON)
+                
+        Note:
+            Orders are returned in descending order by date (most recent first).
+        """
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row  # This enables column access by name
         cursor = conn.cursor()
@@ -120,7 +169,22 @@ class CustomerDatabase:
         return orders
     
     def get_customer_order_history(self, first_name: str, last_name: str) -> str:
-        """Get a formatted string of customer order history for LLM consumption."""
+        """Get a formatted string of customer order history for LLM consumption.
+        
+        Args:
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            str: A formatted string containing the customer's order history.
+                If no customer is found, returns "No order history found for this customer."
+                If customer has no orders, returns a message indicating no orders.
+                Otherwise, returns a detailed history of all orders with items and prices.
+                
+        Note:
+            The returned string is formatted specifically for consumption by language models,
+            with clear sections and itemized details for each order.
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         

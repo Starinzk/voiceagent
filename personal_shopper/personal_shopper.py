@@ -23,7 +23,17 @@ db = CustomerDatabase()
 
 @dataclass
 class UserData:
-    """Class to store user data and agents during a call."""
+    """Class to store user data and agents during a call.
+    
+    Attributes:
+        personas (dict[str, Agent]): Dictionary mapping agent names to their instances
+        prev_agent (Optional[Agent]): The previous agent that handled the call
+        ctx (Optional[JobContext]): The current job context
+        first_name (Optional[str]): Customer's first name
+        last_name (Optional[str]): Customer's last name
+        customer_id (Optional[str]): Customer's unique identifier
+        current_order (Optional[dict]): Current order being processed
+    """
     personas: dict[str, Agent] = field(default_factory=dict)
     prev_agent: Optional[Agent] = None
     ctx: Optional[JobContext] = None
@@ -35,18 +45,30 @@ class UserData:
     current_order: Optional[dict] = None
 
     def is_identified(self) -> bool:
-        """Check if the customer is identified."""
+        """Check if the customer is identified.
+        
+        Returns:
+            bool: True if both first_name and last_name are set, False otherwise
+        """
         return self.first_name is not None and self.last_name is not None
 
     def reset(self) -> None:
-        """Reset customer information."""
+        """Reset all customer information to None.
+        
+        This method clears the customer's name, ID, and current order information.
+        """
         self.first_name = None
         self.last_name = None
         self.customer_id = None
         self.current_order = None
 
     def summarize(self) -> str:
-        """Return a summary of the user data."""
+        """Return a summary of the user data.
+        
+        Returns:
+            str: A formatted string containing customer information if identified,
+                or "Customer not yet identified" if not identified.
+        """
         if self.is_identified():
             return f"Customer: {self.first_name} {self.last_name} (ID: {self.customer_id})"
         return "Customer not yet identified."
@@ -55,6 +77,15 @@ RunContext_T = RunContext[UserData]
 
 class BaseAgent(Agent):
     async def on_enter(self) -> None:
+        """Initialize the agent when entering a new session.
+        
+        This method:
+        1. Sets the agent's name in the room attributes
+        2. Creates a personalized prompt based on customer identification
+        3. Copies context from the previous agent if it exists
+        4. Updates the chat context with system message
+        5. Triggers the first response generation
+        """
         agent_name = self.__class__.__name__
         logger.info(f"Entering {agent_name}")
 
@@ -92,7 +123,21 @@ class BaseAgent(Agent):
         keep_system_message: bool = False,
         keep_function_call: bool = False,
     ) -> list:
-        """Truncate the chat context to keep the last n messages."""
+        """Truncate the chat context to keep the last n messages.
+        
+        Args:
+            items (list): List of chat context items to truncate
+            keep_last_n_messages (int, optional): Number of messages to keep. Defaults to 6.
+            keep_system_message (bool, optional): Whether to keep system messages. Defaults to False.
+            keep_function_call (bool, optional): Whether to keep function calls. Defaults to False.
+            
+        Returns:
+            list: Truncated list of chat context items
+            
+        Note:
+            Items are processed in reverse order, keeping the most recent messages
+            that match the specified criteria.
+        """
         def _valid_item(item) -> bool:
             if not keep_system_message and item.type == "message" and item.role == "system":
                 return False
@@ -114,7 +159,18 @@ class BaseAgent(Agent):
         return new_items
 
     async def _transfer_to_agent(self, name: str, context: RunContext_T) -> Agent:
-        """Transfer to another agent while preserving context."""
+        """Transfer to another agent while preserving context.
+        
+        Args:
+            name (str): Name of the agent to transfer to
+            context (RunContext_T): Current run context
+            
+        Returns:
+            Agent: The next agent to handle the session
+            
+        Note:
+            This method preserves the chat context and updates the previous agent reference.
+        """
         userdata = context.userdata
         current_agent = context.session.current_agent
         next_agent = userdata.personas[name]
@@ -125,6 +181,15 @@ class BaseAgent(Agent):
 
 class TriageAgent(BaseAgent):
     def __init__(self) -> None:
+        """Initialize the Triage agent with specific configuration.
+        
+        Sets up the agent with:
+        - Triage-specific instructions from YAML
+        - Deepgram for speech-to-text
+        - OpenAI GPT-4 for language model
+        - Cartesia for text-to-speech
+        - Silero for voice activity detection
+        """
         super().__init__(
             instructions=load_prompt('triage_prompt.yaml'),
             stt=deepgram.STT(),
@@ -135,12 +200,14 @@ class TriageAgent(BaseAgent):
 
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
-        """
-        Identify a customer by their first and last name.
-
+        """Identify a customer by their first and last name.
+        
         Args:
-            first_name: The customer's first name
-            last_name: The customer's last name
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            str: Confirmation message with the customer's first name
         """
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
@@ -151,6 +218,17 @@ class TriageAgent(BaseAgent):
 
     @function_tool
     async def transfer_to_sales(self, context: RunContext_T) -> Agent:
+        """Transfer the customer to the Sales agent.
+        
+        Args:
+            context (RunContext_T): Current run context
+            
+        Returns:
+            Agent: The Sales agent instance
+            
+        Note:
+            Provides a personalized message if the customer is identified.
+        """
         # Create a personalized message if customer is identified
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
@@ -163,6 +241,17 @@ class TriageAgent(BaseAgent):
 
     @function_tool
     async def transfer_to_returns(self, context: RunContext_T) -> Agent:
+        """Transfer the customer to the Returns agent.
+        
+        Args:
+            context (RunContext_T): Current run context
+            
+        Returns:
+            Agent: The Returns agent instance
+            
+        Note:
+            Provides a personalized message if the customer is identified.
+        """
         # Create a personalized message if customer is identified
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
@@ -176,6 +265,15 @@ class TriageAgent(BaseAgent):
 
 class SalesAgent(BaseAgent):
     def __init__(self) -> None:
+        """Initialize the Sales agent with specific configuration.
+        
+        Sets up the agent with:
+        - Sales-specific instructions from YAML
+        - Deepgram for speech-to-text
+        - OpenAI GPT-4 for language model
+        - Cartesia for text-to-speech
+        - Silero for voice activity detection
+        """
         super().__init__(
             instructions=load_prompt('sales_prompt.yaml'),
             stt=deepgram.STT(),
@@ -202,7 +300,14 @@ class SalesAgent(BaseAgent):
 
     @function_tool
     async def start_order(self):
-        """Start a new order for the customer."""
+        """Start a new order for the customer.
+        
+        Returns:
+            str: Confirmation message or error if customer not identified
+            
+        Note:
+            Initializes an empty items list in the current order.
+        """
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
             return "Please identify the customer first using the identify_customer function."
@@ -215,13 +320,15 @@ class SalesAgent(BaseAgent):
 
     @function_tool
     async def add_item_to_order(self, item_name: str, quantity: int, price: float):
-        """
-        Add an item to the current order.
-
+        """Add an item to the current order.
+        
         Args:
-            item_name: The name of the item
-            quantity: The quantity to purchase
-            price: The price per item
+            item_name (str): The name of the item
+            quantity (int): The quantity to purchase
+            price (float): The price per item
+            
+        Returns:
+            str: Confirmation message or error if customer not identified
         """
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
@@ -242,7 +349,16 @@ class SalesAgent(BaseAgent):
 
     @function_tool
     async def complete_order(self):
-        """Complete the current order and save it to the database."""
+        """Complete the current order and save it to the database.
+        
+        Returns:
+            str: Order summary including order ID, total, and itemized list,
+                or error message if no items in order or customer not identified
+                
+        Note:
+            Calculates order total and saves the order to the database.
+            Resets the current order after completion.
+        """
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
             return "Please identify the customer first using the identify_customer function."
@@ -295,6 +411,15 @@ class SalesAgent(BaseAgent):
 
 class ReturnsAgent(BaseAgent):
     def __init__(self) -> None:
+        """Initialize the Returns agent with specific configuration.
+        
+        Sets up the agent with:
+        - Returns-specific instructions from YAML
+        - Deepgram for speech-to-text
+        - OpenAI GPT-4 for language model
+        - Cartesia for text-to-speech
+        - Silero for voice activity detection
+        """
         super().__init__(
             instructions=load_prompt('returns_prompt.yaml'),
             stt=deepgram.STT(),
@@ -321,7 +446,11 @@ class ReturnsAgent(BaseAgent):
 
     @function_tool
     async def get_order_history(self):
-        """Get the order history for the current customer."""
+        """Get the order history for the current customer.
+        
+        Returns:
+            str: Formatted order history or error if customer not identified
+        """
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
             return "Please identify the customer first using the identify_customer function."
@@ -331,13 +460,19 @@ class ReturnsAgent(BaseAgent):
 
     @function_tool
     async def process_return(self, order_id: int, item_name: str, reason: str):
-        """
-        Process a return for an item from a specific order.
-
+        """Process a return for an item from a specific order.
+        
         Args:
-            order_id: The ID of the order containing the item to return
-            item_name: The name of the item to return
-            reason: The reason for the return
+            order_id (int): The ID of the order containing the item to return
+            item_name (str): The name of the item to return
+            reason (str): The reason for the return
+            
+        Returns:
+            str: Confirmation message with return details or error if customer not identified
+            
+        Note:
+            In a real system, this would update the order in the database.
+            Currently returns a confirmation message with refund timeline.
         """
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
@@ -373,6 +508,18 @@ class ReturnsAgent(BaseAgent):
 
 
 async def entrypoint(ctx: JobContext):
+    """Initialize and start the personal shopper application.
+    
+    Args:
+        ctx (JobContext): The job context containing room and connection information
+        
+    This function:
+    1. Connects to the LiveKit server
+    2. Initializes user data
+    3. Creates agent instances (Triage, Sales, Returns)
+    4. Registers agents in userdata
+    5. Creates and starts a session with the Triage agent
+    """
     await ctx.connect()
 
     # Initialize user data with context
