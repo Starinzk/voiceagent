@@ -10,8 +10,8 @@ from livekit.agents.voice import Agent, AgentSession, RunContext
 from livekit.plugins import cartesia, deepgram, openai, silero
 from livekit.plugins import noise_cancellation
 
-from utils import load_prompt
-from database import CustomerDatabase
+from design_utils import load_prompt
+from design_database import CustomerDatabase
 
 logger = logging.getLogger("personal-shopper")
 logger.setLevel(logging.INFO)
@@ -33,6 +33,7 @@ class UserData:
         last_name (Optional[str]): Customer's last name
         customer_id (Optional[str]): Customer's unique identifier
         current_order (Optional[dict]): Current order being processed
+        status (str): The current status of the customer's workflow
     """
     personas: dict[str, Agent] = field(default_factory=dict)
     prev_agent: Optional[Agent] = None
@@ -43,6 +44,7 @@ class UserData:
     last_name: Optional[str] = None
     customer_id: Optional[str] = None
     current_order: Optional[dict] = None
+    status: str = "awaiting_intent"
 
     def is_identified(self) -> bool:
         """Check if the customer is identified.
@@ -263,19 +265,19 @@ class TriageAgent(BaseAgent):
         return await self._transfer_to_agent("returns", context)
 
 
-class SalesAgent(BaseAgent):
+class DesignCoachAgent(BaseAgent):
     def __init__(self) -> None:
-        """Initialize the Sales agent with specific configuration.
+        """Initialize the Design Coach agent with specific configuration.
         
         Sets up the agent with:
-        - Sales-specific instructions from YAML
+        - Design Coach-specific instructions from YAML
         - Deepgram for speech-to-text
         - OpenAI GPT-4 for language model
         - Cartesia for text-to-speech
         - Silero for voice activity detection
         """
         super().__init__(
-            instructions=load_prompt('sales_prompt.yaml'),
+            instructions=load_prompt('design_coach.yaml'),
             stt=deepgram.STT(),
             llm=openai.LLM(model="gpt-4o-mini"),
             tts=cartesia.TTS(),
@@ -284,12 +286,14 @@ class SalesAgent(BaseAgent):
 
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
-        """
-        Identify a customer by their first and last name.
-
+        """Identify a customer by their first and last name.
+        
         Args:
-            first_name: The customer's first name
-            last_name: The customer's last name
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            str: Confirmation message with the customer's first name
         """
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
@@ -408,20 +412,22 @@ class SalesAgent(BaseAgent):
         await self.session.say(message)
         return await self._transfer_to_agent("returns", context)
 
+    userdata.status = "awaiting_problem_definition"
 
-class ReturnsAgent(BaseAgent):
+
+class DesignStrategistAgent(BaseAgent):
     def __init__(self) -> None:
-        """Initialize the Returns agent with specific configuration.
+        """Initialize the Design Strategist agent with specific configuration.
         
         Sets up the agent with:
-        - Returns-specific instructions from YAML
+        - Design Strategist-specific instructions from YAML
         - Deepgram for speech-to-text
         - OpenAI GPT-4 for language model
         - Cartesia for text-to-speech
         - Silero for voice activity detection
         """
         super().__init__(
-            instructions=load_prompt('returns_prompt.yaml'),
+            instructions=load_prompt('design_strategist.yaml'),
             stt=deepgram.STT(),
             llm=openai.LLM(model="gpt-4o-mini"),
             tts=cartesia.TTS(),
@@ -430,12 +436,111 @@ class ReturnsAgent(BaseAgent):
 
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
-        """
-        Identify a customer by their first and last name.
-
+        """Identify a customer by their first and last name.
+        
         Args:
-            first_name: The customer's first name
-            last_name: The customer's last name
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            str: Confirmation message with the customer's first name
+        """
+        userdata: UserData = self.session.userdata
+        userdata.first_name = first_name
+        userdata.last_name = last_name
+        userdata.customer_id = db.get_or_create_customer(first_name, last_name)
+
+        return f"Thank you, {first_name}. I've found your account."
+
+    @function_tool
+    async def transfer_to_triage(self, context: RunContext_T) -> Agent:
+        # Create a personalized message if customer is identified
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Triage agent who can better direct your inquiry."
+        else:
+            message = "I'll transfer you back to our Triage agent who can better direct your inquiry."
+
+        await self.session.say(message)
+        return await self._transfer_to_agent("triage", context)
+
+    @function_tool
+    async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
+        # Create a personalized message if customer is identified
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Coach who can help you refine your design."
+        else:
+            message = "I'll transfer you to our Design Coach who can help you refine your design."
+
+        await self.session.say(message)
+        return await self._transfer_to_agent("design_coach", context)
+
+    @function_tool
+    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
+        """Transfer the user to the Design Strategist agent."""
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you clarify your design problem."
+        else:
+            message = "I'll transfer you to our Design Strategist who can help you clarify your design problem."
+        await self.session.say(message)
+        return await self._transfer_to_agent("design_strategist", context)
+
+    @function_tool
+    async def transfer_to_design_evaluator(self, context: RunContext_T) -> Agent:
+        """Transfer the user to the Design Evaluator agent."""
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator for structured feedback."
+        else:
+            message = "I'll transfer you to our Design Evaluator for structured feedback."
+        await self.session.say(message)
+        return await self._transfer_to_agent("design_evaluator", context)
+
+    @function_tool
+    async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
+        """Transfer the user back to the Design Coach agent."""
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Design Coach who can help you further clarify your intent."
+        else:
+            message = "I'll transfer you back to our Design Coach who can help you further clarify your intent."
+        await self.session.say(message)
+        return await self._transfer_to_agent("design_coach", context)
+
+    userdata.status = "ready_for_evaluation"
+
+
+class DesignEvaluatorAgent(BaseAgent):
+    def __init__(self) -> None:
+        """Initialize the Design Evaluator agent with specific configuration.
+        
+        Sets up the agent with:
+        - Design Evaluator-specific instructions from YAML
+        - Deepgram for speech-to-text
+        - OpenAI GPT-4 for language model
+        - Cartesia for text-to-speech
+        - Silero for voice activity detection
+        """
+        super().__init__(
+            instructions=load_prompt('design_evaluator.yaml'),
+            stt=deepgram.STT(),
+            llm=openai.LLM(model="gpt-4o-mini"),
+            tts=cartesia.TTS(),
+            vad=silero.VAD.load()
+        )
+
+    @function_tool
+    async def identify_customer(self, first_name: str, last_name: str):
+        """Identify a customer by their first and last name.
+        
+        Args:
+            first_name (str): The customer's first name
+            last_name (str): The customer's last name
+            
+        Returns:
+            str: Confirmation message with the customer's first name
         """
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
@@ -495,16 +600,18 @@ class ReturnsAgent(BaseAgent):
         return await self._transfer_to_agent("triage", context)
 
     @function_tool
-    async def transfer_to_sales(self, context: RunContext_T) -> Agent:
+    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
         # Create a personalized message if customer is identified
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Sales team who can help you find new products."
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you refine your design."
         else:
-            message = "I'll transfer you to our Sales team who can help you find new products."
+            message = "I'll transfer you to our Design Strategist who can help you refine your design."
 
         await self.session.say(message)
-        return await self._transfer_to_agent("sales", context)
+        return await self._transfer_to_agent("design_strategist", context)
+
+    userdata.status = "evaluation_complete"
 
 
 async def entrypoint(ctx: JobContext):
@@ -516,7 +623,7 @@ async def entrypoint(ctx: JobContext):
     This function:
     1. Connects to the LiveKit server
     2. Initializes user data
-    3. Creates agent instances (Triage, Sales, Returns)
+    3. Creates agent instances (Triage, Design Coach, Design Strategist, Design Evaluator)
     4. Registers agents in userdata
     5. Creates and starts a session with the Triage agent
     """
@@ -527,14 +634,16 @@ async def entrypoint(ctx: JobContext):
 
     # Create agent instances
     triage_agent = TriageAgent()
-    sales_agent = SalesAgent()
-    returns_agent = ReturnsAgent()
+    design_coach_agent = DesignCoachAgent()
+    design_strategist_agent = DesignStrategistAgent()
+    design_evaluator_agent = DesignEvaluatorAgent()
 
     # Register all agents in the userdata
     userdata.personas.update({
         "triage": triage_agent,
-        "sales": sales_agent,
-        "returns": returns_agent
+        "design_coach": design_coach_agent,
+        "design_strategist": design_strategist_agent,
+        "design_evaluator": design_evaluator_agent
     })
 
     # Create session with userdata
