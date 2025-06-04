@@ -284,6 +284,11 @@ class DesignCoachAgent(BaseAgent):
             vad=silero.VAD.load()
         )
 
+    async def on_enter(self) -> None:
+        """Set initial status when agent enters."""
+        self.session.userdata.status = "awaiting_problem_definition"
+        await super().on_enter()
+
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
         """Identify a customer by their first and last name.
@@ -412,8 +417,6 @@ class DesignCoachAgent(BaseAgent):
         await self.session.say(message)
         return await self._transfer_to_agent("returns", context)
 
-    userdata.status = "awaiting_problem_definition"
-
 
 class DesignStrategistAgent(BaseAgent):
     def __init__(self) -> None:
@@ -433,6 +436,11 @@ class DesignStrategistAgent(BaseAgent):
             tts=cartesia.TTS(),
             vad=silero.VAD.load()
         )
+
+    async def on_enter(self) -> None:
+        """Set initial status when agent enters."""
+        self.session.userdata.status = "ready_for_evaluation"
+        await super().on_enter()
 
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
@@ -509,8 +517,6 @@ class DesignStrategistAgent(BaseAgent):
         await self.session.say(message)
         return await self._transfer_to_agent("design_coach", context)
 
-    userdata.status = "ready_for_evaluation"
-
 
 class DesignEvaluatorAgent(BaseAgent):
     def __init__(self) -> None:
@@ -530,6 +536,11 @@ class DesignEvaluatorAgent(BaseAgent):
             tts=cartesia.TTS(),
             vad=silero.VAD.load()
         )
+
+    async def on_enter(self) -> None:
+        """Set initial status when agent enters."""
+        self.session.userdata.status = "evaluation_complete"
+        await super().on_enter()
 
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
@@ -610,8 +621,6 @@ class DesignEvaluatorAgent(BaseAgent):
 
         await self.session.say(message)
         return await self._transfer_to_agent("design_strategist", context)
-
-    userdata.status = "evaluation_complete"
 
 
 async def entrypoint(ctx: JobContext):
