@@ -1,5 +1,5 @@
 import logging
-from database import CustomerDatabase
+from design_database import CustomerDatabase
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

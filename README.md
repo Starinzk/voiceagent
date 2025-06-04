@@ -1,6 +1,49 @@
-# LiveKit Personal Shopper Voice Agent
 
-This project is a voice-enabled personal shopping assistant powered by LiveKit, with a Python backend for agent logic and a Next.js frontend for the user interface.
+## Overview
+
+**Design Assistant** is a multi-agent conversational system that guides users through the creative process, from clarifying intent to structured critique.  
+This project replaces the original "Personal Shopper" with a design-focused, human-centered workflow.
+
+---
+
+## Multi-Agent Workflow
+
+The system uses three coordinated AI agents:
+
+1. **Design Coach**  
+   - Welcomes the user and clarifies emotional/strategic intent.
+   - Hands off to the Strategist when ready.
+
+2. **Design Strategist**  
+   - Asks one question at a time to help the user define a Problem Statement and Proposed Solution.
+   - Returns this package to the Coach for evaluation handoff.
+
+3. **Design Evaluator**  
+   - Scores and critiques the Problem Statement and Proposed Solution.
+   - Provides structured feedback using HCD and design principles.
+
+For full workflow details, see the [Multi-Agent Workflow Spec](design_assistant/specs/multi_agent_workflow_spec.md).
+
+---
+
+## Directory Structure
+
+```
+design_assistant/
+├── design_assistant.py           # Main application entrypoint
+├── design_database.py            # Supabase integration and data handling
+├── design_utils.py               # Utility functions (e.g., prompt loading)
+├── test_design_supabase.py       # Supabase integration tests
+├── prompts/
+│   ├── design_coach.yaml         # Design Coach agent persona
+│   ├── design_strategist.yaml    # Design Strategist agent persona
+│   └── design_evaluator.yaml     # Design Evaluator agent persona
+├── specs/
+│   └── multi_agent_workflow_spec.md # Workflow specification
+└── requirements.txt
+```
+
+---
 
 ## Getting Started
 
@@ -8,7 +51,7 @@ Follow these instructions to get the project up and running on your local machin
 
 ### 1. Prerequisites
 
-*   **Node.js and npm:** Required for the frontend. `pnpm` is used for package management; if you don\'t have it, install it globally: `npm install -g pnpm`
+*   **Node.js and npm:** Required for the frontend. `pnpm` is used for package management; if you don't have it, install it globally: `npm install -g pnpm`
 *   **Python 3.10+:** Required for the backend.
 *   **Git:** For cloning the repository.
 *   **API Keys:** You will need accounts and API keys for the following services:
@@ -25,11 +68,11 @@ git clone https://github.com/Starinzk/voiceagent.git
 cd voiceagent
 ```
 
-### 3. Backend Setup (`personal_shopper/`)
+### 3. Backend Setup (`design_assistant/`)
 
 1.  **Navigate to the backend directory:**
     ```bash
-    cd personal_shopper
+    cd design_assistant
     ```
 
 2.  **Create and activate a Python virtual environment:**
@@ -38,6 +81,11 @@ cd voiceagent
     source venv/bin/activate  # On macOS/Linux
     # venv\\Scripts\\activate    # On Windows
     ```
+    
+    To deactivate the virtual environment when you're done:
+    ```bash
+    deactivate
+    ```
 
 3.  **Install Python dependencies:**
     ```bash
@@ -45,7 +93,7 @@ cd voiceagent
     ```
 
 4.  **Create and populate the backend environment file:**
-    Create a file named `.env` in the `personal_shopper/` directory and add the following, replacing `<YOUR_..._KEY>` placeholders with your actual credentials:
+    Create a file named `.env` in the `design_assistant/` directory and add the following, replacing `<YOUR_..._KEY>` placeholders with your actual credentials:
 
     ```env
     # OpenAI
@@ -77,7 +125,7 @@ cd voiceagent
     ```bash
     cd voice-assistant-frontend
     ```
-    Or from `personal_shopper/`:
+    Or from `design_assistant/`:
     ```bash
     cd ../voice-assistant-frontend
     ```
@@ -115,11 +163,11 @@ You need to run both the backend and frontend servers simultaneously in separate
 
 1.  **Run the Backend Server:**
     *   Open a terminal.
-    *   Navigate to `personal_shopper/`.
+    *   Navigate to `design_assistant/`.
     *   Ensure your virtual environment is activated (`source venv/bin/activate`).
     *   Run:
         ```bash
-        python personal_shopper.py dev
+        python3 design_assistant.py dev
         ```
     *   Keep this terminal window running.
 
@@ -136,12 +184,16 @@ You need to run both the backend and frontend servers simultaneously in separate
     Open your web browser and go to:
     [http://localhost:3000](http://localhost:3000)
 
-## Project Structure
+---
 
-*   `personal_shopper/`: Python backend with LiveKit agents, business logic, and database interactions.
-*   `voice-assistant-frontend/`: Next.js frontend for user interaction and voice input/output.
+## Migration Note
 
-## Development Branches
+This project was refactored from the original "Personal Shopper" codebase.  
+All agent logic, prompts, and data handling have been updated for the design-focused workflow.
 
-*   `main`: The primary stable branch.
-*   `dev`: Development branch for new features and fixes.
+---
+
+## Contributing
+
+- Please reference the [multi-agent workflow spec](design_assistant/specs/multi_agent_workflow_spec.md) before making changes to agent logic or workflow.
+- Open issues or pull requests for discussion and review.
