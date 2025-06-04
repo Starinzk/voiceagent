@@ -1,0 +1,7 @@
+livekit-agents[openai,silero,cartesia,deepgram]~=1.0.17
+python-dotenv
+pyyaml
+livekit-plugins-noise-cancellation
+supabase~=2.15.1
+pytest
+pytest-asyncio
