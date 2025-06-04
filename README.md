@@ -81,6 +81,11 @@ cd voiceagent
     source venv/bin/activate  # On macOS/Linux
     # venv\\Scripts\\activate    # On Windows
     ```
+    
+    To deactivate the virtual environment when you're done:
+    ```bash
+    deactivate
+    ```
 
 3.  **Install Python dependencies:**
     ```bash
