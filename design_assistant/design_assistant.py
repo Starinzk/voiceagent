@@ -181,90 +181,6 @@ class BaseAgent(Agent):
         return next_agent
 
 
-class TriageAgent(BaseAgent):
-    def __init__(self) -> None:
-        """Initialize the Triage agent with specific configuration.
-        
-        Sets up the agent with:
-        - Triage-specific instructions from YAML
-        - Deepgram for speech-to-text
-        - OpenAI GPT-4 for language model
-        - Cartesia for text-to-speech
-        - Silero for voice activity detection
-        """
-        super().__init__(
-            instructions=load_prompt('triage_prompt.yaml'),
-            stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4o-mini"),
-            tts=cartesia.TTS(),
-            vad=silero.VAD.load()
-        )
-
-    @function_tool
-    async def identify_customer(self, first_name: str, last_name: str):
-        """Identify a customer by their first and last name.
-        
-        Args:
-            first_name (str): The customer's first name
-            last_name (str): The customer's last name
-            
-        Returns:
-            str: Confirmation message with the customer's first name
-        """
-        userdata: UserData = self.session.userdata
-        userdata.first_name = first_name
-        userdata.last_name = last_name
-        userdata.customer_id = db.get_or_create_customer(first_name, last_name)
-
-        return f"Thank you, {first_name}. I've found your account."
-
-    @function_tool
-    async def transfer_to_sales(self, context: RunContext_T) -> Agent:
-        """Transfer the customer to the Sales agent.
-        
-        Args:
-            context (RunContext_T): Current run context
-            
-        Returns:
-            Agent: The Sales agent instance
-            
-        Note:
-            Provides a personalized message if the customer is identified.
-        """
-        # Create a personalized message if customer is identified
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Sales team who can help you find the perfect product."
-        else:
-            message = "I'll transfer you to our Sales team who can help you find the perfect product."
-
-        await self.session.say(message)
-        return await self._transfer_to_agent("sales", context)
-
-    @function_tool
-    async def transfer_to_returns(self, context: RunContext_T) -> Agent:
-        """Transfer the customer to the Returns agent.
-        
-        Args:
-            context (RunContext_T): Current run context
-            
-        Returns:
-            Agent: The Returns agent instance
-            
-        Note:
-            Provides a personalized message if the customer is identified.
-        """
-        # Create a personalized message if customer is identified
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Returns department who can assist with your return or exchange."
-        else:
-            message = "I'll transfer you to our Returns department who can assist with your return or exchange."
-
-        await self.session.say(message)
-        return await self._transfer_to_agent("returns", context)
-
-
 class DesignCoachAgent(BaseAgent):
     def __init__(self) -> None:
         """Initialize the Design Coach agent with specific configuration.
@@ -284,21 +200,16 @@ class DesignCoachAgent(BaseAgent):
             vad=silero.VAD.load()
         )
 
-    async def on_enter(self) -> None:
-        """Set initial status when agent enters."""
-        self.session.userdata.status = "awaiting_problem_definition"
-        await super().on_enter()
-
     @function_tool
     async def identify_customer(self, first_name: str, last_name: str):
-        """Identify a customer by their first and last name.
+        """Identify a user by their first and last name.
         
         Args:
-            first_name (str): The customer's first name
-            last_name (str): The customer's last name
+            first_name (str): The user's first name
+            last_name (str): The user's last name
             
         Returns:
-            str: Confirmation message with the customer's first name
+            str: Confirmation message with the user's first name
         """
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
@@ -308,114 +219,48 @@ class DesignCoachAgent(BaseAgent):
         return f"Thank you, {first_name}. I've found your account."
 
     @function_tool
-    async def start_order(self):
-        """Start a new order for the customer.
-        
-        Returns:
-            str: Confirmation message or error if customer not identified
-            
-        Note:
-            Initializes an empty items list in the current order.
-        """
-        userdata: UserData = self.session.userdata
-        if not userdata.is_identified():
-            return "Please identify the customer first using the identify_customer function."
-
-        userdata.current_order = {
-            "items": []
-        }
-
-        return "I've started a new order for you. What would you like to purchase?"
-
-    @function_tool
-    async def add_item_to_order(self, item_name: str, quantity: int, price: float):
-        """Add an item to the current order.
+    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
+        """Transfer the user to the Design Strategist agent.
         
         Args:
-            item_name (str): The name of the item
-            quantity (int): The quantity to purchase
-            price (float): The price per item
+            context (RunContext_T): Current run context
             
         Returns:
-            str: Confirmation message or error if customer not identified
-        """
-        userdata: UserData = self.session.userdata
-        if not userdata.is_identified():
-            return "Please identify the customer first using the identify_customer function."
-
-        if not userdata.current_order:
-            userdata.current_order = {"items": []}
-
-        item = {
-            "name": item_name,
-            "quantity": quantity,
-            "price": price
-        }
-
-        userdata.current_order["items"].append(item)
-
-        return f"Added {quantity}x {item_name} to your order."
-
-    @function_tool
-    async def complete_order(self):
-        """Complete the current order and save it to the database.
-        
-        Returns:
-            str: Order summary including order ID, total, and itemized list,
-                or error message if no items in order or customer not identified
-                
+            Agent: The Design Strategist agent instance
+            
         Note:
-            Calculates order total and saves the order to the database.
-            Resets the current order after completion.
+            Provides a personalized message if the user is identified.
         """
         userdata: UserData = self.session.userdata
-        if not userdata.is_identified():
-            return "Please identify the customer first using the identify_customer function."
-
-        if not userdata.current_order or not userdata.current_order.get("items"):
-            return "There are no items in the current order."
-
-        # Calculate order total
-        total = sum(item["price"] * item["quantity"] for item in userdata.current_order["items"])
-        userdata.current_order["total"] = total
-
-        # Save order to database
-        order_id = db.add_order(userdata.customer_id, userdata.current_order)
-
-        # Create a summary of the order
-        summary = f"Order #{order_id} has been completed. Total: ${total:.2f}\n"
-        summary += "Items:\n"
-        for item in userdata.current_order["items"]:
-            summary += f"- {item['quantity']}x {item['name']} (${item['price']} each)\n"
-
-        # Reset the current order
-        userdata.current_order = None
-
-        return summary
-
-    @function_tool
-    async def transfer_to_triage(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
-        userdata: UserData = self.session.userdata
         if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Triage agent who can better direct your inquiry."
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you plan your design strategy."
         else:
-            message = "I'll transfer you back to our Triage agent who can better direct your inquiry."
+            message = "I'll transfer you to our Design Strategist who can help you plan your design strategy."
 
         await self.session.say(message)
-        return await self._transfer_to_agent("triage", context)
+        return await self._transfer_to_agent("design_strategist", context)
 
     @function_tool
-    async def transfer_to_returns(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
+    async def transfer_to_design_evaluator(self, context: RunContext_T) -> Agent:
+        """Transfer the user to the Design Evaluator agent.
+        
+        Args:
+            context (RunContext_T): Current run context
+            
+        Returns:
+            Agent: The Design Evaluator agent instance
+            
+        Note:
+            Provides a personalized message if the user is identified.
+        """
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Returns department for assistance with your return request."
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator who can provide feedback on your design."
         else:
-            message = "I'll transfer you to our Returns department for assistance with your return request."
+            message = "I'll transfer you to our Design Evaluator who can provide feedback on your design."
 
         await self.session.say(message)
-        return await self._transfer_to_agent("returns", context)
+        return await self._transfer_to_agent("design_evaluator", context)
 
 
 class DesignStrategistAgent(BaseAgent):
@@ -624,7 +469,7 @@ class DesignEvaluatorAgent(BaseAgent):
 
 
 async def entrypoint(ctx: JobContext):
-    """Initialize and start the personal shopper application.
+    """Initialize and start the design assistant application.
     
     Args:
         ctx (JobContext): The job context containing room and connection information
@@ -632,9 +477,9 @@ async def entrypoint(ctx: JobContext):
     This function:
     1. Connects to the LiveKit server
     2. Initializes user data
-    3. Creates agent instances (Triage, Design Coach, Design Strategist, Design Evaluator)
+    3. Creates agent instances (Design Coach, Design Strategist, Design Evaluator)
     4. Registers agents in userdata
-    5. Creates and starts a session with the Triage agent
+    5. Creates and starts a session with the Design Coach agent
     """
     await ctx.connect()
 
@@ -642,14 +487,12 @@ async def entrypoint(ctx: JobContext):
     userdata = UserData(ctx=ctx)
 
     # Create agent instances
-    triage_agent = TriageAgent()
     design_coach_agent = DesignCoachAgent()
     design_strategist_agent = DesignStrategistAgent()
     design_evaluator_agent = DesignEvaluatorAgent()
 
     # Register all agents in the userdata
     userdata.personas.update({
-        "triage": triage_agent,
         "design_coach": design_coach_agent,
         "design_strategist": design_strategist_agent,
         "design_evaluator": design_evaluator_agent
@@ -659,7 +502,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession[UserData](userdata=userdata)
 
     await session.start(
-        agent=triage_agent,  # Start with the Triage agent
+        agent=design_coach_agent,  # Start with the Design Coach agent
         room=ctx.room
     )
 
