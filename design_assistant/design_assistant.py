@@ -1,7 +1,37 @@
+"""
+Design Assistant Application
+
+This module implements a design workflow system with three agents:
+1. Design Coach - Initial agent that helps users articulate their design challenge
+2. Design Strategist - Refines problem statements and proposes solutions
+3. Design Evaluator - Evaluates solutions and provides structured feedback
+
+Design Decisions:
+- In-memory state management for user data and session state
+- Simple user identification via name
+- No authentication required
+- No persistence between sessions
+
+Out of Scope:
+- Database persistence (future feature)
+- User authentication
+- Cloud storage
+- Real-time collaboration
+- Analytics and reporting
+
+Future Considerations:
+- Database integration
+- User authentication system
+- Cloud storage integration
+- Real-time updates
+- Usage analytics
+"""
+
 import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
+from datetime import datetime
 
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli
@@ -11,83 +41,172 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 from livekit.plugins import noise_cancellation
 
 from design_utils import load_prompt
-from design_database import CustomerDatabase
+from design_database import DesignDatabase
 
-logger = logging.getLogger("personal-shopper")
+logger = logging.getLogger("design-assistant")
 logger.setLevel(logging.INFO)
 
 load_dotenv()
 
-# Initialize the customer database
-db = CustomerDatabase()
+# Initialize the design database
+db = DesignDatabase()
 
 @dataclass
 class UserData:
-    """Class to store user data and agents during a call.
+    '''
+    Class to store user data and agents during a design session.
     
-    Attributes:
-        personas (dict[str, Agent]): Dictionary mapping agent names to their instances
-        prev_agent (Optional[Agent]): The previous agent that handled the call
-        ctx (Optional[JobContext]): The current job context
-        first_name (Optional[str]): Customer's first name
-        last_name (Optional[str]): Customer's last name
-        customer_id (Optional[str]): Customer's unique identifier
-        current_order (Optional[dict]): Current order being processed
-        status (str): The current status of the customer's workflow
-    """
+    Design Decisions:
+    - In-memory state management
+    - Simple user identification via name
+    - No authentication required
+    - No persistence between sessions
+    
+    Out of Scope:
+    - User authentication
+    - Data persistence
+    - Real-time collaboration
+    - Analytics
+    
+    Future Considerations:
+    - Database persistence
+    - User authentication
+    - Real-time updates
+    - Analytics tracking
+    '''
+    # Agent Management
     personas: dict[str, Agent] = field(default_factory=dict)
     prev_agent: Optional[Agent] = None
     ctx: Optional[JobContext] = None
 
-    # Customer information
+    # User Identification
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    customer_id: Optional[str] = None
-    current_order: Optional[dict] = None
-    status: str = "awaiting_intent"
+    user_id: Optional[str] = None
+
+    # Design Session Data
+    design_challenge: Optional[str] = None
+    target_users: Optional[list[str]] = None
+    emotional_goals: Optional[list[str]] = None
+    problem_statement: Optional[str] = None
+    proposed_solution: Optional[str] = None
+
+    # Session State
+    status: str = "awaiting_problem_definition"  # Flow: awaiting_problem_definition -> ready_for_evaluation -> evaluation_complete
+
+    # Design History
+    design_iterations: list[dict] = field(default_factory=list)
+    feedback_history: list[dict] = field(default_factory=list)
 
     def is_identified(self) -> bool:
-        """Check if the customer is identified.
+        '''
+        Check if the user is identified.
         
-        Returns:
-            bool: True if both first_name and last_name are set, False otherwise
-        """
+        Design Decisions:
+        - Simple name-based identification
+        - No authentication required
+        - In-memory state only
+        
+        Limitations:
+        - No persistence between sessions
+        - No duplicate prevention
+        
+        Future Improvements:
+        - Database persistence
+        - User authentication
+        - Duplicate prevention
+        '''
         return self.first_name is not None and self.last_name is not None
 
     def reset(self) -> None:
-        """Reset all customer information to None.
+        '''
+        Reset all user information.
         
-        This method clears the customer's name, ID, and current order information.
-        """
+        Design Decisions:
+        - Simple in-memory reset
+        - No persistence
+        
+        Limitations:
+        - No data backup
+        - No history preservation
+        
+        Future Improvements:
+        - Database persistence
+        - History preservation
+        '''
         self.first_name = None
         self.last_name = None
-        self.customer_id = None
-        self.current_order = None
+        self.user_id = None
+        self.design_challenge = None
+        self.target_users = None
+        self.emotional_goals = None
+        self.problem_statement = None
+        self.proposed_solution = None
+        self.status = "awaiting_problem_definition"
+        self.design_iterations = []
+        self.feedback_history = []
 
     def summarize(self) -> str:
-        """Return a summary of the user data.
+        '''
+        Return a summary of the user data.
         
-        Returns:
-            str: A formatted string containing customer information if identified,
-                or "Customer not yet identified" if not identified.
-        """
+        Design Decisions:
+        - Simple text-based summary
+        - In-memory data only
+        
+        Limitations:
+        - No rich formatting
+        - No customization options
+        
+        Future Improvements:
+        - Rich formatting
+        - Customization options
+        '''
         if self.is_identified():
-            return f"Customer: {self.first_name} {self.last_name} (ID: {self.customer_id})"
-        return "Customer not yet identified."
+            return f"User: {self.first_name} {self.last_name} (ID: {self.user_id})"
+        return "User not yet identified."
 
 RunContext_T = RunContext[UserData]
 
 class BaseAgent(Agent):
+    '''
+    Base class for all design agents.
+    
+    Design Decisions:
+    - Common functionality for all agents
+    - In-memory context management
+    - No persistence between sessions
+    
+    Out of Scope:
+    - Real-time collaboration
+    - Multi-agent coordination
+    - Analytics tracking
+    
+    Future Considerations:
+    - Database persistence
+    - Real-time updates
+    - Multi-agent coordination
+    - Analytics tracking
+    '''
+
     async def on_enter(self) -> None:
-        """Initialize the agent when entering a new session.
+        '''
+        Initialize the agent when entering a new session.
         
-        This method:
-        1. Sets the agent's name in the room attributes
-        2. Creates a personalized prompt based on customer identification
-        3. Copies context from the previous agent if it exists
-        4. Updates the chat context with system message
-        5. Triggers the first response generation
-        """
+        Design Decisions:
+        - Simple initialization
+        - In-memory state only
+        - No persistence
+        
+        Limitations:
+        - No authentication
+        - No session persistence
+        
+        Future Improvements:
+        - Database persistence
+        - Authentication
+        - Session persistence
+        '''
         agent_name = self.__class__.__name__
         logger.info(f"Entering {agent_name}")
 
@@ -95,7 +214,7 @@ class BaseAgent(Agent):
         if userdata.ctx and userdata.ctx.room:
             await userdata.ctx.room.local_participant.set_attributes({"agent": agent_name})
 
-        # Create a personalized prompt based on customer identification
+        # Create a personalized prompt based on user identification
         custom_instructions = self.instructions
         if userdata.is_identified():
             custom_instructions += f"\n\nYou are speaking with {userdata.first_name} {userdata.last_name}."
@@ -125,21 +244,22 @@ class BaseAgent(Agent):
         keep_system_message: bool = False,
         keep_function_call: bool = False,
     ) -> list:
-        """Truncate the chat context to keep the last n messages.
+        '''
+        Truncate the chat context to keep the last n messages.
         
-        Args:
-            items (list): List of chat context items to truncate
-            keep_last_n_messages (int, optional): Number of messages to keep. Defaults to 6.
-            keep_system_message (bool, optional): Whether to keep system messages. Defaults to False.
-            keep_function_call (bool, optional): Whether to keep function calls. Defaults to False.
-            
-        Returns:
-            list: Truncated list of chat context items
-            
-        Note:
-            Items are processed in reverse order, keeping the most recent messages
-            that match the specified criteria.
-        """
+        Design Decisions:
+        - Simple truncation
+        - In-memory only
+        - No persistence
+        
+        Limitations:
+        - No context persistence
+        - No context sharing
+        
+        Future Improvements:
+        - Database persistence
+        - Context sharing
+        '''
         def _valid_item(item) -> bool:
             if not keep_system_message and item.type == "message" and item.role == "system":
                 return False
@@ -161,18 +281,23 @@ class BaseAgent(Agent):
         return new_items
 
     async def _transfer_to_agent(self, name: str, context: RunContext_T) -> Agent:
-        """Transfer to another agent while preserving context.
+        '''
+        Transfer to another agent while preserving context.
         
-        Args:
-            name (str): Name of the agent to transfer to
-            context (RunContext_T): Current run context
-            
-        Returns:
-            Agent: The next agent to handle the session
-            
-        Note:
-            This method preserves the chat context and updates the previous agent reference.
-        """
+        Design Decisions:
+        - Simple transfer mechanism
+        - In-memory context preservation
+        - No persistence
+        
+        Limitations:
+        - No session persistence
+        - No multi-agent coordination
+        
+        Future Improvements:
+        - Database persistence
+        - Multi-agent coordination
+        - Session persistence
+        '''
         userdata = context.userdata
         current_agent = context.session.current_agent
         next_agent = userdata.personas[name]
@@ -182,16 +307,47 @@ class BaseAgent(Agent):
 
 
 class DesignCoachAgent(BaseAgent):
+    '''
+    Initial agent that helps users articulate their design challenge.
+    
+    Design Decisions:
+    - First point of contact for users
+    - Focuses on understanding user needs and challenges
+    - Uses GPT-4 for high-quality responses
+    - Maintains conversation context in memory
+    
+    Out of Scope:
+    - Solution generation
+    - Technical implementation
+    - Design evaluation
+    - Data persistence
+    
+    Future Considerations:
+    - Multi-modal input (images, sketches)
+    - Design pattern suggestions
+    - Integration with design tools
+    - Database persistence
+    '''
     def __init__(self) -> None:
-        """Initialize the Design Coach agent with specific configuration.
+        '''
+        Initialize the Design Coach agent with specific configuration.
         
-        Sets up the agent with:
-        - Design Coach-specific instructions from YAML
-        - Deepgram for speech-to-text
-        - OpenAI GPT-4 for language model
-        - Cartesia for text-to-speech
-        - Silero for voice activity detection
-        """
+        Design Decisions:
+        - Uses GPT-4 for high-quality responses
+        - Deepgram for accurate speech recognition
+        - Cartesia for natural-sounding voice
+        - Silero for reliable voice detection
+        
+        Example Configuration:
+        ```python
+        agent = DesignCoachAgent()
+        # Agent will use:
+        # - GPT-4 for understanding and responding
+        # - Deepgram for converting speech to text
+        # - Cartesia for converting text to speech
+        # - Silero for detecting when user is speaking
+        ```
+        '''
         super().__init__(
             instructions=load_prompt('design_coach.yaml'),
             stt=deepgram.STT(),
@@ -201,58 +357,158 @@ class DesignCoachAgent(BaseAgent):
         )
 
     @function_tool
-    async def identify_customer(self, first_name: str, last_name: str):
-        """Identify a user by their first and last name.
+    async def identify_user(self, first_name: str, last_name: str):
+        '''
+        Identify a user by their first and last name.
         
-        Args:
-            first_name (str): The user's first name
-            last_name (str): The user's last name
-            
-        Returns:
-            str: Confirmation message with the user's first name
-        """
+        Design Decisions:
+        - Simple name-based identification
+        - In-memory state only
+        - No authentication required
+        
+        Example Usage:
+        ```python
+        # User provides their name
+        await agent.identify_user("John", "Doe")
+        # Creates in-memory user record
+        # Returns: "Thank you, John. I've found your account."
+        ```
+        
+        Limitations:
+        - No persistence between sessions
+        - No duplicate prevention
+        - No user verification
+        
+        Future Improvements:
+        - Database persistence
+        - User authentication
+        - Duplicate prevention
+        '''
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        userdata.customer_id = db.get_or_create_customer(first_name, last_name)
+        # TODO: Future feature - Implement database persistence
+        # userdata.user_id = db.get_or_create_user(first_name, last_name)
+        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
 
         return f"Thank you, {first_name}. I've found your account."
 
     @function_tool
-    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
-        """Transfer the user to the Design Strategist agent.
+    async def capture_design_challenge(self, design_challenge: str, target_users: list[str], emotional_goals: list[str]):
+        '''
+        Capture the initial design challenge, target users, and emotional goals.
         
-        Args:
-            context (RunContext_T): Current run context
-            
-        Returns:
-            Agent: The Design Strategist agent instance
-            
-        Note:
-            Provides a personalized message if the user is identified.
-        """
+        Design Decisions:
+        - Simple text-based capture
+        - In-memory state only
+        - No validation rules
+        
+        Example Usage:
+        ```python
+        # Capture initial design information
+        await agent.capture_design_challenge(
+            design_challenge="Design a mobile app for fitness tracking",
+            target_users=["Fitness enthusiasts", "Busy professionals"],
+            emotional_goals=["Feel motivated", "Stay committed"]
+        )
+        # Updates in-memory user data
+        # Returns: "I've captured your design challenge and goals."
+        ```
+        
+        Limitations:
+        - No persistence between sessions
+        - No input validation
+        
+        Future Improvements:
+        - Database persistence
+        - Input validation
+        '''
+        userdata: UserData = self.session.userdata
+        if not userdata.is_identified():
+            return "Please identify yourself first using the identify_user function."
+
+        # Update user data
+        userdata.design_challenge = design_challenge
+        userdata.target_users = target_users
+        userdata.emotional_goals = emotional_goals
+        userdata.status = "ready_for_evaluation"
+
+        # TODO: Future feature - Implement database persistence
+        # session_data = {
+        #     'design_challenge': design_challenge,
+        #     'target_users': target_users,
+        #     'emotional_goals': emotional_goals,
+        #     'status': userdata.status
+        # }
+        # db.save_design_session(userdata.user_id, session_data)
+
+        return "I've captured your design challenge and goals. Let's work on refining the problem statement."
+
+    @function_tool
+    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
+        '''
+        Transfer the user to the Design Strategist agent.
+        
+        Design Decisions:
+        - Preserves conversation context
+        - Provides personalized message
+        - Smooth transition between agents
+        
+        Example Usage:
+        ```python
+        # When user is ready for strategy
+        await agent.transfer_to_design_strategist(context)
+        # Transfers to strategist with context
+        # Returns: Design Strategist agent instance
+        ```
+        
+        Limitations:
+        - No real-time updates
+        - No multi-agent coordination
+        - No session persistence
+        
+        Future Improvements:
+        - Real-time updates
+        - Multi-agent coordination
+        - Session persistence
+        '''
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you plan your design strategy."
+            message = f"Thank you, {userdata.first_name}. Strategist, take it from here."
         else:
-            message = "I'll transfer you to our Design Strategist who can help you plan your design strategy."
+            message = "Strategist, take it from here."
 
         await self.session.say(message)
         return await self._transfer_to_agent("design_strategist", context)
 
     @function_tool
     async def transfer_to_design_evaluator(self, context: RunContext_T) -> Agent:
-        """Transfer the user to the Design Evaluator agent.
+        '''
+        Transfer the user to the Design Evaluator agent.
         
-        Args:
-            context (RunContext_T): Current run context
-            
-        Returns:
-            Agent: The Design Evaluator agent instance
-            
-        Note:
-            Provides a personalized message if the user is identified.
-        """
+        Design Decisions:
+        - Preserves conversation context
+        - Provides personalized message
+        - Smooth transition between agents
+        
+        Example Usage:
+        ```python
+        # When user is ready for evaluation
+        await agent.transfer_to_design_evaluator(context)
+        # Transfers to evaluator with context
+        # Returns: Design Evaluator agent instance
+        ```
+        
+        Limitations:
+        - No real-time updates
+        - No multi-agent coordination
+        - No session persistence
+        
+        Future Improvements:
+        - Real-time updates
+        - Multi-agent coordination
+        - Session persistence
+        '''
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator who can provide feedback on your design."
@@ -264,16 +520,47 @@ class DesignCoachAgent(BaseAgent):
 
 
 class DesignStrategistAgent(BaseAgent):
+    '''
+    Agent responsible for refining problem statements and proposing solutions.
+    
+    Design Decisions:
+    - Focuses on problem analysis and solution design
+    - Uses GPT-4 for strategic thinking
+    - Maintains design context in memory
+    - Provides structured problem statements
+    
+    Out of Scope:
+    - Technical implementation details
+    - User research
+    - Final design evaluation
+    - Data persistence
+    
+    Future Considerations:
+    - Design pattern library integration
+    - Solution templates
+    - Design system integration
+    - Database persistence
+    '''
     def __init__(self) -> None:
-        """Initialize the Design Strategist agent with specific configuration.
+        '''
+        Initialize the Design Strategist agent with specific configuration.
         
-        Sets up the agent with:
-        - Design Strategist-specific instructions from YAML
-        - Deepgram for speech-to-text
-        - OpenAI GPT-4 for language model
-        - Cartesia for text-to-speech
-        - Silero for voice activity detection
-        """
+        Design Decisions:
+        - Uses GPT-4 for strategic thinking
+        - Deepgram for accurate speech recognition
+        - Cartesia for natural-sounding voice
+        - Silero for reliable voice detection
+        
+        Example Configuration:
+        ```python
+        agent = DesignStrategistAgent()
+        # Agent will use:
+        # - GPT-4 for strategic analysis
+        # - Deepgram for converting speech to text
+        # - Cartesia for converting text to speech
+        # - Silero for detecting when user is speaking
+        ```
+        '''
         super().__init__(
             instructions=load_prompt('design_strategist.yaml'),
             stt=deepgram.STT(),
@@ -283,77 +570,186 @@ class DesignStrategistAgent(BaseAgent):
         )
 
     async def on_enter(self) -> None:
-        """Set initial status when agent enters."""
+        '''
+        Set initial status when agent enters.
+        
+        Design Decisions:
+        - Updates session status
+        - Preserves conversation context
+        - Maintains design state
+        
+        Example Usage:
+        ```python
+        # When agent starts
+        await agent.on_enter()
+        # Updates status to "ready_for_evaluation"
+        # Preserves conversation context
+        ```
+        
+        Limitations:
+        - No real-time status updates
+        - No multi-agent coordination
+        - No session persistence
+        
+        Future Improvements:
+        - Real-time status updates
+        - Multi-agent coordination
+        - Session persistence
+        '''
         self.session.userdata.status = "ready_for_evaluation"
         await super().on_enter()
 
     @function_tool
-    async def identify_customer(self, first_name: str, last_name: str):
-        """Identify a customer by their first and last name.
-        
-        Args:
-            first_name (str): The customer's first name
-            last_name (str): The customer's last name
-            
-        Returns:
-            str: Confirmation message with the customer's first name
-        """
+    async def identify_user(self, first_name: str, last_name: str):
+        '''
+        Identify a user by their first and last name.
+        '''
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        userdata.customer_id = db.get_or_create_customer(first_name, last_name)
+        # TODO: Future feature - Implement database persistence
+        # userdata.user_id = db.get_or_create_user(first_name, last_name)
+        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
 
         return f"Thank you, {first_name}. I've found your account."
 
     @function_tool
-    async def transfer_to_triage(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
+    async def refine_problem_statement(self, problem_statement: str):
+        '''
+        Refine the problem statement based on the design challenge and goals.
+        
+        Design Decisions:
+        - Simple text-based refinement
+        - In-memory state only
+        - Must use "How might we..." format
+        
+        Example Usage:
+        ```python
+        # Refine problem statement
+        await agent.refine_problem_statement(
+            "How might we create a mobile app that helps busy professionals track their fitness goals while maintaining motivation?"
+        )
+        # Updates in-memory user data
+        # Returns: "I've refined your problem statement. Let's work on proposing solutions."
+        ```
+        
+        Limitations:
+        - No persistence between sessions
+        - No input validation
+        
+        Future Improvements:
+        - Database persistence
+        - Input validation
+        '''
         userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Triage agent who can better direct your inquiry."
-        else:
-            message = "I'll transfer you back to our Triage agent who can better direct your inquiry."
+        if not userdata.is_identified():
+            return "Please identify yourself first using the identify_user function."
+            
+        if not userdata.design_challenge:
+            return "Please capture the design challenge first using the Design Coach agent."
 
-        await self.session.say(message)
-        return await self._transfer_to_agent("triage", context)
+        # Check for "How might we..." format
+        if not problem_statement.lower().startswith("how might we"):
+            return "Problem statement must start with 'How might we...' to follow design thinking best practices."
+
+        # Update user data
+        userdata.problem_statement = problem_statement
+        userdata.status = "ready_for_evaluation"
+
+        # TODO: Future feature - Implement database persistence
+        # session_data = {
+        #     'problem_statement': problem_statement,
+        #     'status': userdata.status
+        # }
+        # db.save_design_session(userdata.user_id, session_data)
+
+        return "I've refined your problem statement. Let's work on proposing solutions."
+
+    @function_tool
+    async def propose_solution(self, solution: str):
+        '''
+        Propose a solution based on the refined problem statement.
+        
+        Design Decisions:
+        - Simple text-based solution
+        - In-memory state only
+        - Tracks design iterations in memory
+        
+        Example Usage:
+        ```python
+        # Propose a solution
+        await agent.propose_solution(
+            "A mobile app with gamified fitness tracking, social features, and personalized goals to keep users motivated."
+        )
+        # Updates in-memory user data
+        # Returns: "I've recorded your solution. Let's evaluate it."
+        ```
+        
+        Limitations:
+        - No persistence between sessions
+        - No input validation
+        
+        Future Improvements:
+        - Database persistence
+        - Input validation
+        '''
+        userdata: UserData = self.session.userdata
+        if not userdata.is_identified():
+            return "Please identify yourself first using the identify_user function."
+            
+        if not userdata.problem_statement:
+            return "Please refine the problem statement first using the refine_problem_statement function."
+
+        # Update user data
+        userdata.proposed_solution = solution
+        userdata.status = "ready_for_evaluation"
+        
+        # Track this iteration
+        iteration = {
+            'problem_statement': userdata.problem_statement,
+            'solution': solution,
+            'timestamp': datetime.now().isoformat()
+        }
+        userdata.design_iterations.append(iteration)
+
+        # TODO: Future feature - Implement database persistence
+        # session_data = {
+        #     'proposed_solution': solution,
+        #     'status': userdata.status,
+        #     'design_iterations': userdata.design_iterations
+        # }
+        # db.save_design_session(userdata.user_id, session_data)
+
+        return f"Problem Statement: {userdata.problem_statement}\nProposed Solution: {solution}\nCoach, we're ready for evaluation."
 
     @function_tool
     async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Coach who can help you refine your design."
-        else:
-            message = "I'll transfer you to our Design Coach who can help you refine your design."
-
-        await self.session.say(message)
-        return await self._transfer_to_agent("design_coach", context)
-
-    @function_tool
-    async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
-        """Transfer the user to the Design Strategist agent."""
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you clarify your design problem."
-        else:
-            message = "I'll transfer you to our Design Strategist who can help you clarify your design problem."
-        await self.session.say(message)
-        return await self._transfer_to_agent("design_strategist", context)
-
-    @function_tool
-    async def transfer_to_design_evaluator(self, context: RunContext_T) -> Agent:
-        """Transfer the user to the Design Evaluator agent."""
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator for structured feedback."
-        else:
-            message = "I'll transfer you to our Design Evaluator for structured feedback."
-        await self.session.say(message)
-        return await self._transfer_to_agent("design_evaluator", context)
-
-    @function_tool
-    async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
-        """Transfer the user back to the Design Coach agent."""
+        '''
+        Transfer the user back to the Design Coach agent.
+        
+        Design Decisions:
+        - Preserves conversation context
+        - Provides personalized message
+        - Smooth transition between agents
+        
+        Example Usage:
+        ```python
+        # When user needs to clarify design challenge
+        await agent.transfer_to_design_coach(context)
+        # Transfers to coach with context
+        # Returns: Design Coach agent instance
+        ```
+        
+        Limitations:
+        - No real-time updates
+        - No multi-agent coordination
+        - No session persistence
+        
+        Future Improvements:
+        - Real-time updates
+        - Multi-agent coordination
+        - Session persistence
+        '''
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Design Coach who can help you further clarify your intent."
@@ -362,18 +758,75 @@ class DesignStrategistAgent(BaseAgent):
         await self.session.say(message)
         return await self._transfer_to_agent("design_coach", context)
 
+    @function_tool
+    async def transfer_to_design_evaluator(self, context: RunContext_T) -> Agent:
+        '''
+        Transfer the user to the Design Evaluator agent.
+        
+        Design Decisions:
+        - Preserves conversation context
+        - Provides personalized message
+        - Smooth transition between agents
+        
+        Example Usage:
+        ```python
+        # When solution is ready for evaluation
+        await agent.transfer_to_design_evaluator(context)
+        # Transfers to evaluator with context
+        # Returns: Design Evaluator agent instance
+        ```
+        
+        Limitations:
+        - No real-time updates
+        - No multi-agent coordination
+        - No session persistence
+        
+        Future Improvements:
+        - Real-time updates
+        - Multi-agent coordination
+        - Session persistence
+        '''
+        userdata: UserData = self.session.userdata
+        if userdata.is_identified():
+            message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator for structured feedback."
+        else:
+            message = "I'll transfer you to our Design Evaluator for structured feedback."
+        await self.session.say(message)
+        return await self._transfer_to_agent("design_evaluator", context)
+
 
 class DesignEvaluatorAgent(BaseAgent):
+    '''
+    Agent responsible for evaluating solutions and providing structured feedback.
+    
+    Design Decisions:
+    - Focuses on solution evaluation
+    - Uses GPT-4 for comprehensive analysis
+    - Provides structured feedback
+    - Maintains evaluation history in memory
+    
+    Out of Scope:
+    - Solution generation
+    - User research
+    - Technical implementation
+    - Data persistence
+    
+    Future Considerations:
+    - Evaluation templates
+    - Metrics tracking
+    - A/B testing support
+    - Database persistence
+    '''
     def __init__(self) -> None:
-        """Initialize the Design Evaluator agent with specific configuration.
+        '''
+        Initialize the Design Evaluator agent with specific configuration.
         
-        Sets up the agent with:
-        - Design Evaluator-specific instructions from YAML
-        - Deepgram for speech-to-text
-        - OpenAI GPT-4 for language model
-        - Cartesia for text-to-speech
-        - Silero for voice activity detection
-        """
+        Design Decisions:
+        - Uses GPT-4 for comprehensive analysis
+        - Deepgram for accurate speech recognition
+        - Cartesia for natural-sounding voice
+        - Silero for reliable voice detection
+        '''
         super().__init__(
             instructions=load_prompt('design_evaluator.yaml'),
             stt=deepgram.STT(),
@@ -383,81 +836,31 @@ class DesignEvaluatorAgent(BaseAgent):
         )
 
     async def on_enter(self) -> None:
-        """Set initial status when agent enters."""
+        '''
+        Set initial status when agent enters.
+        '''
         self.session.userdata.status = "evaluation_complete"
         await super().on_enter()
 
     @function_tool
-    async def identify_customer(self, first_name: str, last_name: str):
-        """Identify a customer by their first and last name.
-        
-        Args:
-            first_name (str): The customer's first name
-            last_name (str): The customer's last name
-            
-        Returns:
-            str: Confirmation message with the customer's first name
-        """
+    async def identify_user(self, first_name: str, last_name: str):
+        '''
+        Identify a user by their first and last name.
+        '''
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        userdata.customer_id = db.get_or_create_customer(first_name, last_name)
+        # TODO: Future feature - Implement database persistence
+        # userdata.user_id = db.get_or_create_user(first_name, last_name)
+        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
 
         return f"Thank you, {first_name}. I've found your account."
 
     @function_tool
-    async def get_order_history(self):
-        """Get the order history for the current customer.
-        
-        Returns:
-            str: Formatted order history or error if customer not identified
-        """
-        userdata: UserData = self.session.userdata
-        if not userdata.is_identified():
-            return "Please identify the customer first using the identify_customer function."
-
-        order_history = db.get_customer_order_history(userdata.first_name, userdata.last_name)
-        return order_history
-
-    @function_tool
-    async def process_return(self, order_id: int, item_name: str, reason: str):
-        """Process a return for an item from a specific order.
-        
-        Args:
-            order_id (int): The ID of the order containing the item to return
-            item_name (str): The name of the item to return
-            reason (str): The reason for the return
-            
-        Returns:
-            str: Confirmation message with return details or error if customer not identified
-            
-        Note:
-            In a real system, this would update the order in the database.
-            Currently returns a confirmation message with refund timeline.
-        """
-        userdata: UserData = self.session.userdata
-        if not userdata.is_identified():
-            return "Please identify the customer first using the identify_customer function."
-
-        # In a real system, we would update the order in the database
-        # For this example, we'll just return a confirmation message
-        return f"Return processed for {item_name} from Order #{order_id}. Reason: {reason}. A refund will be issued within 3-5 business days."
-
-    @function_tool
-    async def transfer_to_triage(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
-        userdata: UserData = self.session.userdata
-        if userdata.is_identified():
-            message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Triage agent who can better direct your inquiry."
-        else:
-            message = "I'll transfer you back to our Triage agent who can better direct your inquiry."
-
-        await self.session.say(message)
-        return await self._transfer_to_agent("triage", context)
-
-    @function_tool
     async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
-        # Create a personalized message if customer is identified
+        '''
+        Transfer the user to the Design Strategist agent.
+        '''
         userdata: UserData = self.session.userdata
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist who can help you refine your design."
