@@ -3,6 +3,147 @@
 ## Overview
 This specification outlines the data model and prompts for the design workflow system, which consists of three agents: Design Coach, Design Strategist, and Design Evaluator. Each agent has specific roles and responsibilities in the design process.
 
+## Constraints and No-Gos
+
+### Out of Scope
+1. **Supabase Integration**
+   - No connection to Supabase backend
+   - Continue using local SQLite database for now
+   - Supabase integration will be a separate feature branch
+
+2. **Authentication**
+   - No user authentication system
+   - Continue with simple user identification via name
+   - Authentication will be handled in a future feature
+
+3. **Persistent Storage**
+   - No cloud storage for design assets
+   - No file upload/download capabilities
+   - Focus on text-based design challenges and solutions
+
+4. **Real-time Collaboration**
+   - No multi-user collaboration features
+   - No real-time updates between sessions
+   - Single user workflow only
+
+5. **Analytics and Reporting**
+   - No analytics dashboard
+   - No usage statistics
+   - No performance metrics
+
+### Technical Constraints
+1. **Database**
+   - Use existing SQLite database structure
+   - No schema migrations
+   - No data migration tools
+
+2. **API Integration**
+   - No external API calls
+   - No third-party service integration
+   - Keep all processing local
+
+3. **UI/UX**
+   - No UI changes to the frontend
+   - No new UI components
+   - Focus on backend workflow only
+
+## Code Documentation Standards
+
+### Class-Level Documentation
+```python
+"""
+Class-level docstrings should include:
+1. Purpose of the class
+2. Key design decisions
+3. Out-of-scope features
+4. Future considerations
+
+Example:
+class DesignDatabase:
+    '''
+    Local SQLite database for design session data.
+    
+    Design Decisions:
+    - Using SQLite for local storage (see constraints)
+    - No cloud sync (future feature)
+    - Simple user identification via name
+    
+    Out of Scope:
+    - Supabase integration (future feature)
+    - User authentication
+    - Cloud storage
+    
+    Future Considerations:
+    - Migration to Supabase
+    - User authentication system
+    - Cloud storage integration
+    '''
+"""
+```
+
+### Method-Level Documentation
+```python
+"""
+Method docstrings should include:
+1. Purpose of the method
+2. Design decisions
+3. Limitations
+4. Future improvements
+
+Example:
+def save_design_session(self, user_id: str, session_data: dict):
+    '''
+    Save design session data to local SQLite database.
+    
+    Design Decisions:
+    - Local storage only (no cloud sync)
+    - Simple user identification
+    - No authentication required
+    
+    Limitations:
+    - Data not persisted to cloud
+    - No real-time updates
+    - Single user only
+    
+    Future Improvements:
+    - Cloud sync with Supabase
+    - Real-time updates
+    - Multi-user support
+    '''
+"""
+```
+
+### Important Code Comments
+```python
+# Use comments to explain:
+# 1. Why certain approaches were chosen
+# 2. What's intentionally not implemented
+# 3. Future considerations
+# 4. Technical debt
+
+# Example:
+# TODO: Future feature - Implement Supabase integration
+# NOTE: Using local storage only - see constraints.md
+# FIXME: Will need to be updated when authentication is added
+```
+
+### Documentation Files
+1. **README.md**
+   - Project overview
+   - Setup instructions
+   - Known limitations
+   - Future features
+
+2. **CONSTRAINTS.md**
+   - Detailed constraints
+   - Out-of-scope features
+   - Technical limitations
+
+3. **FUTURE.md**
+   - Planned features
+   - Technical debt
+   - Migration plans
+
 ## Data Model
 
 ### UserData Class

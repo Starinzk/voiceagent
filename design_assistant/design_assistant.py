@@ -41,7 +41,7 @@ from livekit.plugins import cartesia, deepgram, openai, silero
 from livekit.plugins import noise_cancellation
 
 from design_utils import load_prompt
-from design_database import DesignDatabase
+from design_database import CustomerDatabase
 
 logger = logging.getLogger("design-assistant")
 logger.setLevel(logging.INFO)
@@ -49,7 +49,7 @@ logger.setLevel(logging.INFO)
 load_dotenv()
 
 # Initialize the design database
-db = DesignDatabase()
+db = CustomerDatabase()
 
 @dataclass
 class UserData:
