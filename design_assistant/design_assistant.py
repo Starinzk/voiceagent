@@ -6,11 +6,17 @@ This module implements a design workflow system with three agents:
 2. Design Strategist - Refines problem statements and proposes solutions
 3. Design Evaluator - Evaluates solutions and provides structured feedback
 
+Key Features:
+- Multi-agent design workflow (Coach, Strategist, Evaluator)
+- Supabase integration for user and session data persistence
+- Dynamic context passing between agents
+- Voice-enabled interaction using LiveKit, Deepgram, and Cartesia
+
 Design Decisions:
-- In-memory state management for user data and session state
-- Simple user identification via name
-- No authentication required
-- No persistence between sessions
+- UserData class for centralized state management
+- Modular agent design for clear separation of concerns
+- Database persistence for all session-related data
+- Simple user identification via name (no authentication)
 
 Out of Scope:
 - Database persistence (future feature)
@@ -56,25 +62,31 @@ print("--- DATABASE: DesignDatabase initialized ---")
 @dataclass
 class UserData:
     '''
-    Class to store user data and agents during a design session.
-    
-    Design Decisions:
-    - In-memory state management
-    - Simple user identification via name
-    - No authentication required
-    - No persistence between sessions
-    
-    Out of Scope:
-    - User authentication
-    - Data persistence
-    - Real-time collaboration
-    - Analytics
-    
-    Future Considerations:
-    - Database persistence
-    - User authentication
-    - Real-time updates
-    - Analytics tracking
+    Manages the state for a user's design session, including all data,
+    history, and agent interactions. This class is central to the application's
+    state management and orchestrates database persistence.
+
+    Attributes:
+        personas (dict[str, Agent]): Holds all agent instances for the session.
+        prev_agent (Optional[Agent]): The previously active agent, used for context transfer.
+        ctx (Optional[JobContext]): The LiveKit job context.
+
+        first_name (Optional[str]): The user's first name.
+        last_name (Optional[str]): The user's last name.
+        user_id (Optional[str]): The user's unique ID from the database.
+
+        design_challenge (Optional[str]): The initial design challenge.
+        target_users (Optional[list[str]]): The target audience for the design.
+        emotional_goals (Optional[list[str]]): The desired emotional outcomes.
+        problem_statement (Optional[str]): The refined "How might we..." statement.
+        proposed_solution (Optional[str]): The description of the proposed solution.
+
+        status (str): The current state of the design workflow.
+        design_iterations (list[dict]): A history of design iterations.
+        feedback_history (list[dict]): A history of feedback received.
+
+        db (Optional[DesignDatabase]): The database client instance, used for all
+                                      persistence operations.
     '''
     # Agent Management
     personas: dict[str, Agent] = field(default_factory=dict)
@@ -101,31 +113,20 @@ class UserData:
     feedback_history: list[dict] = field(default_factory=list)
 
     # Database Integration
-    db: Optional[DesignDatabase] = field(default=None, metadata={
-        'doc': 'Database connection for state persistence. Required for save_state() and load_state() methods.'
+    db: Optional[DesignDatabase] = field(default=None, repr=False, metadata={
+        'doc': 'Database connection for state persistence. Set during initialization.'
     })
 
     def is_identified(self) -> bool:
         '''
-        Check if the user is identified.
+        Check if the user has been identified, either in memory or in the database.
         
-        Design Decisions:
-        - Simple name-based identification
-        - No authentication required
-        - In-memory state only
-        - Database state fallback
-        
-        Limitations:
-        - No persistence between sessions
-        - No duplicate prevention
-        
-        Future Improvements:
-        - Database persistence
-        - User authentication
-        - Duplicate prevention
+        This method first checks for a first and last name in the current session's
+        memory. If not found, it will check if a user_id exists and is valid in the
+        database. This allows for identifying returning users who have persisted sessions.
         
         Returns:
-            bool: True if user is identified in memory or database
+            bool: True if the user is identified, False otherwise.
         '''
         if self.first_name and self.last_name:
             return True
@@ -267,23 +268,11 @@ RunContext_T = RunContext[UserData]
 
 class BaseAgent(Agent):
     '''
-    Base class for all design agents.
-    
-    Design Decisions:
-    - Common functionality for all agents
-    - In-memory context management
-    - No persistence between sessions
-    
-    Out of Scope:
-    - Real-time collaboration
-    - Multi-agent coordination
-    - Analytics tracking
-    
-    Future Considerations:
-    - Database persistence
-    - Real-time updates
-    - Multi-agent coordination
-    - Analytics tracking
+    Base class for all design agents, providing common functionality.
+
+    This class handles agent initialization, context management, and chat history
+    truncation. It ensures a smooth transition of context when switching between
+    different agents in the design workflow.
     '''
 
     async def on_enter(self) -> None:
@@ -405,25 +394,13 @@ class BaseAgent(Agent):
 
 class DesignCoachAgent(BaseAgent):
     '''
-    Initial agent that helps users articulate their design challenge.
+    The initial agent that helps users articulate their design challenge.
     
-    Design Decisions:
-    - First point of contact for users
-    - Focuses on understanding user needs and challenges
-    - Uses GPT-4 for high-quality responses
-    - Maintains conversation context in memory
-    
-    Out of Scope:
-    - Solution generation
-    - Technical implementation
-    - Design evaluation
-    - Data persistence
-    
-    Future Considerations:
-    - Multi-modal input (images, sketches)
-    - Design pattern suggestions
-    - Integration with design tools
-    - Database persistence
+    The Design Coach is the first point of contact. It is responsible for
+    identifying the user and capturing the core components of their design
+    idea: the challenge, target users, and emotional goals. Once this
+    information is gathered, it persists the initial session and hands off
+    to the Design Strategist.
     '''
     def __init__(self) -> None:
         '''
@@ -616,25 +593,17 @@ class DesignCoachAgent(BaseAgent):
 
 class DesignStrategistAgent(BaseAgent):
     '''
-    Agent responsible for refining problem statements and proposing solutions.
+    An agent responsible for refining problem statements and proposing solutions.
     
-    Design Decisions:
-    - Focuses on problem analysis and solution design
-    - Uses GPT-4 for strategic thinking
-    - Maintains design context in memory
-    - Provides structured problem statements
+    The Design Strategist takes the initial design challenge from the Coach
+    and helps the user refine it into a structured "How might we..." problem
+    statement. It then guides the user in proposing a solution to that
+    problem. All progress is persisted to the database.
     
     Out of Scope:
     - Technical implementation details
     - User research
     - Final design evaluation
-    - Data persistence
-    
-    Future Considerations:
-    - Design pattern library integration
-    - Solution templates
-    - Design system integration
-    - Database persistence
     '''
     def __init__(self) -> None:
         '''
@@ -846,25 +815,15 @@ class DesignStrategistAgent(BaseAgent):
 
 class DesignEvaluatorAgent(BaseAgent):
     '''
-    Agent responsible for evaluating solutions and providing structured feedback.
-    
-    Design Decisions:
-    - Focuses on solution evaluation
-    - Uses GPT-4 for comprehensive analysis
-    - Provides structured feedback
-    - Maintains evaluation history in memory
+    An agent responsible for evaluating solutions and providing structured feedback.
+
+    The Design Evaluator is intended to provide structured, objective feedback on a
+    proposed solution.
     
     Out of Scope:
     - Solution generation
     - User research
     - Technical implementation
-    - Data persistence
-    
-    Future Considerations:
-    - Evaluation templates
-    - Metrics tracking
-    - A/B testing support
-    - Database persistence
     '''
     def __init__(self) -> None:
         '''
@@ -926,15 +885,15 @@ async def entrypoint(ctx: JobContext):
         
     This function:
     1. Connects to the LiveKit server
-    2. Initializes user data
+    2. Initializes user data and injects the database client
     3. Creates agent instances (Design Coach, Design Strategist, Design Evaluator)
     4. Registers agents in userdata
     5. Creates and starts a session with the Design Coach agent
     """
     await ctx.connect()
 
-    # Initialize user data with context
-    userdata = UserData(ctx=ctx)
+    # Initialize user data with context and a database connection
+    userdata = UserData(ctx=ctx, db=db)
 
     # Create agent instances
     design_coach_agent = DesignCoachAgent()

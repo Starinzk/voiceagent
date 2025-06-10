@@ -26,7 +26,7 @@ Database Schema:
 import os
 import re
 import uuid
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
 import logging
 from supabase import create_client, Client
 from supabase._sync.client import SupabaseException
@@ -34,6 +34,9 @@ from postgrest.exceptions import APIError
 from dotenv import load_dotenv
 import json
 from dataclasses import asdict
+
+if TYPE_CHECKING:
+    from design_assistant.design_assistant import UserData
 
 logger = logging.getLogger("design-assistant-db")
 logger.setLevel(logging.INFO)
@@ -344,18 +347,22 @@ class DesignDatabase:
         except APIError as e:
             raise ValueError(f"Failed to get session details: {str(e)}")
 
-    def save_user_data(self, user_data: Any) -> str:
+    def save_user_data(self, user_data: "UserData") -> str:
         """
-        Save the current state of a UserData instance to the database.
-        
+        Saves the complete state of a UserData instance to the database.
+
+        This method orchestrates the saving of the user, their design session,
+        and all related iterations and feedback. It will either create a new
+        session or update an existing one based on the design challenge.
+
         Args:
-            user_data: The UserData instance to save
-            
+            user_data (UserData): The UserData instance containing the state to save.
+
         Returns:
-            str: The ID of the session
-            
+            str: The session ID of the saved or updated session.
+
         Raises:
-            ValueError: If required fields are missing or invalid
+            ValueError: If required data is missing or a database error occurs.
         """
         # Validate required fields
         self._validate_required_fields({
@@ -435,18 +442,22 @@ class DesignDatabase:
         except APIError as e:
             raise ValueError(f"Failed to save user data: {str(e)}")
 
-    def load_user_data(self, session_id: str) -> Any:
+    def load_user_data(self, session_id: str) -> "UserData":
         """
-        Load a UserData instance from the database using a session ID.
-        
+        Loads the state of a design session from the database into a UserData object.
+
+        This method retrieves a session, its associated user, iterations, and
+        feedback from the database and reconstructs a UserData object from it.
+
         Args:
-            session_id: The ID of the session to load
-            
+            session_id (str): The UUID of the design session to load.
+
         Returns:
-            UserData: A new UserData instance populated with the saved state
-            
+            UserData: An instance of UserData populated with the loaded state.
+
         Raises:
-            ValueError: If the session ID is invalid or the session doesn't exist
+            ValueError: If the session ID is invalid, or if the session or its
+                        associated user cannot be found.
         """
         self._validate_uuid(session_id)
         
