@@ -6,11 +6,17 @@ This module implements a design workflow system with three agents:
 2. Design Strategist - Refines problem statements and proposes solutions
 3. Design Evaluator - Evaluates solutions and provides structured feedback
 
+Key Features:
+- Multi-agent design workflow (Coach, Strategist, Evaluator)
+- Supabase integration for user and session data persistence
+- Dynamic context passing between agents
+- Voice-enabled interaction using LiveKit, Deepgram, and Cartesia
+
 Design Decisions:
-- In-memory state management for user data and session state
-- Simple user identification via name
-- No authentication required
-- No persistence between sessions
+- UserData class for centralized state management
+- Modular agent design for clear separation of concerns
+- Database persistence for all session-related data
+- Simple user identification via name (no authentication)
 
 Out of Scope:
 - Database persistence (future feature)
@@ -40,8 +46,8 @@ from livekit.agents.voice import Agent, AgentSession, RunContext
 from livekit.plugins import cartesia, deepgram, openai, silero
 from livekit.plugins import noise_cancellation
 
-from design_utils import load_prompt
-from design_database import CustomerDatabase
+from design_assistant.design_utils import load_prompt
+from design_assistant.design_database import DesignDatabase
 
 logger = logging.getLogger("design-assistant")
 logger.setLevel(logging.INFO)
@@ -49,30 +55,38 @@ logger.setLevel(logging.INFO)
 load_dotenv()
 
 # Initialize the design database
-db = CustomerDatabase()
+print("--- DATABASE: Initializing DesignDatabase at module level ---")
+db = DesignDatabase()
+print("--- DATABASE: DesignDatabase initialized ---")
 
 @dataclass
 class UserData:
     '''
-    Class to store user data and agents during a design session.
-    
-    Design Decisions:
-    - In-memory state management
-    - Simple user identification via name
-    - No authentication required
-    - No persistence between sessions
-    
-    Out of Scope:
-    - User authentication
-    - Data persistence
-    - Real-time collaboration
-    - Analytics
-    
-    Future Considerations:
-    - Database persistence
-    - User authentication
-    - Real-time updates
-    - Analytics tracking
+    Manages the state for a user's design session, including all data,
+    history, and agent interactions. This class is central to the application's
+    state management and orchestrates database persistence.
+
+    Attributes:
+        personas (dict[str, Agent]): Holds all agent instances for the session.
+        prev_agent (Optional[Agent]): The previously active agent, used for context transfer.
+        ctx (Optional[JobContext]): The LiveKit job context.
+
+        first_name (Optional[str]): The user's first name.
+        last_name (Optional[str]): The user's last name.
+        user_id (Optional[str]): The user's unique ID from the database.
+
+        design_challenge (Optional[str]): The initial design challenge.
+        target_users (Optional[list[str]]): The target audience for the design.
+        emotional_goals (Optional[list[str]]): The desired emotional outcomes.
+        problem_statement (Optional[str]): The refined "How might we..." statement.
+        proposed_solution (Optional[str]): The description of the proposed solution.
+
+        status (str): The current state of the design workflow.
+        design_iterations (list[dict]): A history of design iterations.
+        feedback_history (list[dict]): A history of feedback received.
+
+        db (Optional[DesignDatabase]): The database client instance, used for all
+                                      persistence operations.
     '''
     # Agent Management
     personas: dict[str, Agent] = field(default_factory=dict)
@@ -98,25 +112,31 @@ class UserData:
     design_iterations: list[dict] = field(default_factory=list)
     feedback_history: list[dict] = field(default_factory=list)
 
+    # Database Integration
+    db: Optional[DesignDatabase] = field(default=None, repr=False, metadata={
+        'doc': 'Database connection for state persistence. Set during initialization.'
+    })
+
     def is_identified(self) -> bool:
         '''
-        Check if the user is identified.
+        Check if the user has been identified, either in memory or in the database.
         
-        Design Decisions:
-        - Simple name-based identification
-        - No authentication required
-        - In-memory state only
+        This method first checks for a first and last name in the current session's
+        memory. If not found, it will check if a user_id exists and is valid in the
+        database. This allows for identifying returning users who have persisted sessions.
         
-        Limitations:
-        - No persistence between sessions
-        - No duplicate prevention
-        
-        Future Improvements:
-        - Database persistence
-        - User authentication
-        - Duplicate prevention
+        Returns:
+            bool: True if the user is identified, False otherwise.
         '''
-        return self.first_name is not None and self.last_name is not None
+        if self.first_name and self.last_name:
+            return True
+        if self.user_id and self.db:
+            try:
+                self.db.get_session_details(self.user_id)
+                return True
+            except ValueError:
+                return False
+        return False
 
     def reset(self) -> None:
         '''
@@ -125,6 +145,7 @@ class UserData:
         Design Decisions:
         - Simple in-memory reset
         - No persistence
+        - Preserves database connection
         
         Limitations:
         - No data backup
@@ -133,6 +154,10 @@ class UserData:
         Future Improvements:
         - Database persistence
         - History preservation
+        
+        Note:
+            This will only reset in-memory state.
+            To delete database state, use the database directly.
         '''
         self.first_name = None
         self.last_name = None
@@ -166,27 +191,88 @@ class UserData:
             return f"User: {self.first_name} {self.last_name} (ID: {self.user_id})"
         return "User not yet identified."
 
+    def save_state(self) -> str:
+        '''
+        Save the current state to the database.
+        
+        Design Decisions:
+        - Uses DesignDatabase for persistence
+        - Preserves all user data and session state
+        - Maintains design history and feedback
+        
+        Returns:
+            str: The session ID that can be used to load this state later
+            
+        Raises:
+            ValueError: If no database is configured
+            
+        Example:
+            ```python
+            session_id = user_data.save_state()
+            # Later...
+            user_data.load_state(session_id)
+            ```
+            
+        Note:
+            This method will:
+            1. Save user information
+            2. Save current session state
+            3. Save all design iterations
+            4. Save all feedback history
+        '''
+        if not self.db:
+            raise ValueError("No database configured. Set UserData.db before saving.")
+        return self.db.save_user_data(self)
+
+    def load_state(self, session_id: str) -> None:
+        '''
+        Load state from the database.
+        
+        Design Decisions:
+        - Uses DesignDatabase for state recovery
+        - Preserves agent-related fields
+        - Maintains database connection
+        
+        Args:
+            session_id (str): The ID of the session to load
+            
+        Raises:
+            ValueError: If no database is configured or session not found
+            
+        Example:
+            ```python
+            user_data.load_state("123")
+            # All fields are now populated from the database
+            ```
+            
+        Note:
+            This method will:
+            1. Load user information
+            2. Load session state
+            3. Load all design iterations
+            4. Load all feedback history
+            5. Preserve agent-related fields (personas, prev_agent, ctx)
+        '''
+        if not self.db:
+            raise ValueError("No database configured. Set UserData.db before loading.")
+        
+        # Load state from database
+        loaded_data = self.db.load_user_data(session_id)
+        
+        # Update all fields except db and agent-related fields
+        for field in self.__dataclass_fields__:
+            if field not in ['db', 'personas', 'prev_agent', 'ctx']:
+                setattr(self, field, getattr(loaded_data, field))
+
 RunContext_T = RunContext[UserData]
 
 class BaseAgent(Agent):
     '''
-    Base class for all design agents.
-    
-    Design Decisions:
-    - Common functionality for all agents
-    - In-memory context management
-    - No persistence between sessions
-    
-    Out of Scope:
-    - Real-time collaboration
-    - Multi-agent coordination
-    - Analytics tracking
-    
-    Future Considerations:
-    - Database persistence
-    - Real-time updates
-    - Multi-agent coordination
-    - Analytics tracking
+    Base class for all design agents, providing common functionality.
+
+    This class handles agent initialization, context management, and chat history
+    truncation. It ensures a smooth transition of context when switching between
+    different agents in the design workflow.
     '''
 
     async def on_enter(self) -> None:
@@ -308,25 +394,13 @@ class BaseAgent(Agent):
 
 class DesignCoachAgent(BaseAgent):
     '''
-    Initial agent that helps users articulate their design challenge.
+    The initial agent that helps users articulate their design challenge.
     
-    Design Decisions:
-    - First point of contact for users
-    - Focuses on understanding user needs and challenges
-    - Uses GPT-4 for high-quality responses
-    - Maintains conversation context in memory
-    
-    Out of Scope:
-    - Solution generation
-    - Technical implementation
-    - Design evaluation
-    - Data persistence
-    
-    Future Considerations:
-    - Multi-modal input (images, sketches)
-    - Design pattern suggestions
-    - Integration with design tools
-    - Database persistence
+    The Design Coach is the first point of contact. It is responsible for
+    identifying the user and capturing the core components of their design
+    idea: the challenge, target users, and emotional goals. Once this
+    information is gathered, it persists the initial session and hands off
+    to the Design Strategist.
     '''
     def __init__(self) -> None:
         '''
@@ -351,7 +425,7 @@ class DesignCoachAgent(BaseAgent):
         super().__init__(
             instructions=load_prompt('design_coach.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4o-mini"),
+            llm=openai.LLM(model="gpt-3.5-turbo", timeout=30.0),
             tts=cartesia.TTS(),
             vad=silero.VAD.load()
         )
@@ -387,9 +461,13 @@ class DesignCoachAgent(BaseAgent):
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        # TODO: Future feature - Implement database persistence
-        # userdata.user_id = db.get_or_create_user(first_name, last_name)
-        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
+
+        print(f"--- DATABASE: Attempting to get/create user: {first_name} {last_name} ---")
+        try:
+            userdata.user_id = db.get_or_create_user(first_name, last_name)
+            print(f"--- DATABASE: Successfully got/created user with ID: {userdata.user_id} ---")
+        except Exception as e:
+            print(f"--- DATABASE: ERROR during get_or_create_user: {e} ---")
 
         return f"Thank you, {first_name}. I've found your account."
 
@@ -431,16 +509,10 @@ class DesignCoachAgent(BaseAgent):
         userdata.design_challenge = design_challenge
         userdata.target_users = target_users
         userdata.emotional_goals = emotional_goals
-        userdata.status = "ready_for_evaluation"
+        userdata.status = "awaiting_problem_statement"
 
-        # TODO: Future feature - Implement database persistence
-        # session_data = {
-        #     'design_challenge': design_challenge,
-        #     'target_users': target_users,
-        #     'emotional_goals': emotional_goals,
-        #     'status': userdata.status
-        # }
-        # db.save_design_session(userdata.user_id, session_data)
+        # Save the entire session state to the database
+        userdata.save_state()
 
         return "I've captured your design challenge and goals. Let's work on refining the problem statement."
 
@@ -521,25 +593,17 @@ class DesignCoachAgent(BaseAgent):
 
 class DesignStrategistAgent(BaseAgent):
     '''
-    Agent responsible for refining problem statements and proposing solutions.
+    An agent responsible for refining problem statements and proposing solutions.
     
-    Design Decisions:
-    - Focuses on problem analysis and solution design
-    - Uses GPT-4 for strategic thinking
-    - Maintains design context in memory
-    - Provides structured problem statements
+    The Design Strategist takes the initial design challenge from the Coach
+    and helps the user refine it into a structured "How might we..." problem
+    statement. It then guides the user in proposing a solution to that
+    problem. All progress is persisted to the database.
     
     Out of Scope:
     - Technical implementation details
     - User research
     - Final design evaluation
-    - Data persistence
-    
-    Future Considerations:
-    - Design pattern library integration
-    - Solution templates
-    - Design system integration
-    - Database persistence
     '''
     def __init__(self) -> None:
         '''
@@ -564,7 +628,7 @@ class DesignStrategistAgent(BaseAgent):
         super().__init__(
             instructions=load_prompt('design_strategist.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4o-mini"),
+            llm=openai.LLM(model="gpt-3.5-turbo", timeout=30.0),
             tts=cartesia.TTS(),
             vad=silero.VAD.load()
         )
@@ -572,31 +636,10 @@ class DesignStrategistAgent(BaseAgent):
     async def on_enter(self) -> None:
         '''
         Set initial status when agent enters.
-        
-        Design Decisions:
-        - Updates session status
-        - Preserves conversation context
-        - Maintains design state
-        
-        Example Usage:
-        ```python
-        # When agent starts
-        await agent.on_enter()
-        # Updates status to "ready_for_evaluation"
-        # Preserves conversation context
-        ```
-        
-        Limitations:
-        - No real-time status updates
-        - No multi-agent coordination
-        - No session persistence
-        
-        Future Improvements:
-        - Real-time status updates
-        - Multi-agent coordination
-        - Session persistence
         '''
-        self.session.userdata.status = "ready_for_evaluation"
+        initial_speech = "Thanks, Coach. Now, let's refine that challenge. Based on what you've described, how might we frame the core problem you're trying to solve?"
+        await self.session.say(initial_speech)
+        self.session.userdata.status = "awaiting_problem_statement"
         await super().on_enter()
 
     @function_tool
@@ -607,9 +650,7 @@ class DesignStrategistAgent(BaseAgent):
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        # TODO: Future feature - Implement database persistence
-        # userdata.user_id = db.get_or_create_user(first_name, last_name)
-        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
+        userdata.user_id = db.get_or_create_user(first_name, last_name)
 
         return f"Thank you, {first_name}. I've found your account."
 
@@ -666,32 +707,13 @@ class DesignStrategistAgent(BaseAgent):
         return "I've refined your problem statement. Let's work on proposing solutions."
 
     @function_tool
-    async def propose_solution(self, solution: str):
+    async def propose_solution(self, solution_description: str, key_features: list[str]):
         '''
-        Propose a solution based on the refined problem statement.
+        Propose a detailed solution with specific features.
         
-        Design Decisions:
-        - Simple text-based solution
-        - In-memory state only
-        - Tracks design iterations in memory
-        
-        Example Usage:
-        ```python
-        # Propose a solution
-        await agent.propose_solution(
-            "A mobile app with gamified fitness tracking, social features, and personalized goals to keep users motivated."
-        )
-        # Updates in-memory user data
-        # Returns: "I've recorded your solution. Let's evaluate it."
-        ```
-        
-        Limitations:
-        - No persistence between sessions
-        - No input validation
-        
-        Future Improvements:
-        - Database persistence
-        - Input validation
+        Args:
+            solution_description (str): A clear, concise description of the proposed solution.
+            key_features (list[str]): A list of specific, key features of the solution.
         '''
         userdata: UserData = self.session.userdata
         if not userdata.is_identified():
@@ -701,26 +723,22 @@ class DesignStrategistAgent(BaseAgent):
             return "Please refine the problem statement first using the refine_problem_statement function."
 
         # Update user data
-        userdata.proposed_solution = solution
-        userdata.status = "ready_for_evaluation"
+        userdata.proposed_solution = solution_description
+        userdata.status = "evaluation_complete" # Ready for the evaluator
         
         # Track this iteration
         iteration = {
             'problem_statement': userdata.problem_statement,
-            'solution': solution,
+            'solution': solution_description,
+            'key_features': key_features,
             'timestamp': datetime.now().isoformat()
         }
         userdata.design_iterations.append(iteration)
 
         # TODO: Future feature - Implement database persistence
-        # session_data = {
-        #     'proposed_solution': solution,
-        #     'status': userdata.status,
-        #     'design_iterations': userdata.design_iterations
-        # }
-        # db.save_design_session(userdata.user_id, session_data)
+        # ...
 
-        return f"Problem Statement: {userdata.problem_statement}\nProposed Solution: {solution}\nCoach, we're ready for evaluation."
+        return f"Solution captured. Transferring to the Design Evaluator for feedback."
 
     @function_tool
     async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
@@ -797,25 +815,15 @@ class DesignStrategistAgent(BaseAgent):
 
 class DesignEvaluatorAgent(BaseAgent):
     '''
-    Agent responsible for evaluating solutions and providing structured feedback.
-    
-    Design Decisions:
-    - Focuses on solution evaluation
-    - Uses GPT-4 for comprehensive analysis
-    - Provides structured feedback
-    - Maintains evaluation history in memory
+    An agent responsible for evaluating solutions and providing structured feedback.
+
+    The Design Evaluator is intended to provide structured, objective feedback on a
+    proposed solution.
     
     Out of Scope:
     - Solution generation
     - User research
     - Technical implementation
-    - Data persistence
-    
-    Future Considerations:
-    - Evaluation templates
-    - Metrics tracking
-    - A/B testing support
-    - Database persistence
     '''
     def __init__(self) -> None:
         '''
@@ -830,7 +838,7 @@ class DesignEvaluatorAgent(BaseAgent):
         super().__init__(
             instructions=load_prompt('design_evaluator.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4o-mini"),
+            llm=openai.LLM(model="gpt-3.5-turbo", timeout=30.0),
             tts=cartesia.TTS(),
             vad=silero.VAD.load()
         )
@@ -850,9 +858,7 @@ class DesignEvaluatorAgent(BaseAgent):
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
-        # TODO: Future feature - Implement database persistence
-        # userdata.user_id = db.get_or_create_user(first_name, last_name)
-        userdata.user_id = f"{first_name}_{last_name}"  # Temporary in-memory ID
+        userdata.user_id = db.get_or_create_user(first_name, last_name)
 
         return f"Thank you, {first_name}. I've found your account."
 
@@ -879,15 +885,15 @@ async def entrypoint(ctx: JobContext):
         
     This function:
     1. Connects to the LiveKit server
-    2. Initializes user data
+    2. Initializes user data and injects the database client
     3. Creates agent instances (Design Coach, Design Strategist, Design Evaluator)
     4. Registers agents in userdata
     5. Creates and starts a session with the Design Coach agent
     """
     await ctx.connect()
 
-    # Initialize user data with context
-    userdata = UserData(ctx=ctx)
+    # Initialize user data with context and a database connection
+    userdata = UserData(ctx=ctx, db=db)
 
     # Create agent instances
     design_coach_agent = DesignCoachAgent()
