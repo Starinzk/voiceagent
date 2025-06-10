@@ -364,83 +364,82 @@ class DesignDatabase:
         Raises:
             ValueError: If required data is missing or a database error occurs.
         """
-        # Validate required fields
+        # Validate required fields for a user to exist
         self._validate_required_fields({
             'first_name': user_data.first_name,
             'last_name': user_data.last_name,
-            'design_challenge': user_data.design_challenge
-        }, ['first_name', 'last_name', 'design_challenge'])
+        }, ['first_name', 'last_name'])
         
-        # Create a copy of the data without non-serializable fields
-        data_dict = {
-            'first_name': user_data.first_name,
-            'last_name': user_data.last_name,
-            'user_id': user_data.user_id,
-            'design_challenge': user_data.design_challenge,
-            'status': user_data.status,
-            'proposed_solution': user_data.proposed_solution,
-            'design_iterations': user_data.design_iterations,
-            'feedback_history': user_data.feedback_history,
-            'personas': user_data.personas,
-            'ctx': user_data.ctx
-        }
-        
+        # A design challenge is required to create or update a session
+        if not user_data.design_challenge:
+             raise ValueError("Design challenge is required to save a session.")
+
         try:
-            # Create or update user record
-            user_id = self.get_or_create_user(data_dict['first_name'], data_dict['last_name'])
+            # Step 1: Get or create the user and update the user_data object
+            user_id = self.get_or_create_user(user_data.first_name, user_data.last_name)
+            user_data.user_id = user_id
             
-            # Check for existing session
-            existing_sessions = self.get_user_sessions(user_id)
+            # Step 2: Check if a session for this user and challenge already exists
             session_id = None
+            if user_data.user_id:
+                existing_sessions = self.get_user_sessions(user_id)
+                for session in existing_sessions:
+                    if session['design_challenge'] == user_data.design_challenge:
+                        session_id = session['id']
+                        break
             
-            for session in existing_sessions:
-                if session['design_challenge'] == data_dict['design_challenge']:
-                    session_id = session['id']
-                    break
-            
+            # Step 3: Prepare the data payload for the session update.
+            # This contains only serializable fields that can change during the session.
+            session_payload = {
+                'status': user_data.status,
+                'problem_statement': user_data.problem_statement,
+                'proposed_solution': user_data.proposed_solution,
+            }
+            # Filter out None values so we don't overwrite database fields with nulls.
+            session_payload = {k: v for k, v in session_payload.items() if v is not None}
+
+            # Step 4: Create or update the session
             if session_id:
-                # Update existing session
-                self.update_session(session_id, {
-                    'proposed_solution': data_dict['proposed_solution'],
-                    'personas': data_dict['personas'],
-                    'ctx': data_dict['ctx'],
-                    'status': data_dict['status']
-                })
+                # Update the existing session if there's anything to update
+                if session_payload:
+                    self.update_session(session_id, session_payload)
             else:
-                # Create new session
+                # Or, create a new session if one doesn't exist for this challenge
                 session_id = self.create_design_session(
                     user_id=user_id,
-                    design_challenge=data_dict['design_challenge'],
-                    target_users=user_data.target_users,
-                    emotional_goals=user_data.emotional_goals,
-                    status=data_dict['status']
+                    design_challenge=user_data.design_challenge,
+                    target_users=user_data.target_users or [],
+                    emotional_goals=user_data.emotional_goals or [],
+                    status=user_data.status
                 )
-                
-                # Update session with additional data
-                self.update_session(session_id, {
-                    'proposed_solution': data_dict['proposed_solution'],
-                    'personas': data_dict['personas'],
-                    'ctx': data_dict['ctx']
-                })
+                # After creation, update it with any additional data that may already exist
+                if session_payload:
+                    self.update_session(session_id, session_payload)
             
-            # Save iterations and feedback, avoiding duplicates
-            existing_iterations_res = self.client.table('design_iterations').select('problem_statement,solution').eq('session_id', session_id).execute()
-            existing_iterations = [(i['problem_statement'], i['solution']) for i in existing_iterations_res.data]
+            # Step 5: Save iterations and feedback, avoiding duplicates
+            if session_id:
+                existing_iterations_res = self.client.table('design_iterations').select('problem_statement,solution').eq('session_id', session_id).execute()
+                existing_iterations = [(i['problem_statement'], i['solution']) for i in existing_iterations_res.data]
 
-            for iteration in data_dict['design_iterations']:
-                if (iteration['problem_statement'], iteration['solution']) not in existing_iterations:
-                    self.add_design_iteration(session_id, iteration['problem_statement'], iteration['solution'])
+                for iteration in user_data.design_iterations:
+                    if 'problem_statement' in iteration and 'solution' in iteration:
+                        if (iteration['problem_statement'], iteration['solution']) not in existing_iterations:
+                            self.add_design_iteration(session_id, iteration['problem_statement'], iteration['solution'])
 
-            existing_feedback_res = self.client.table('feedback_history').select('feedback_data').eq('session_id', session_id).execute()
-            existing_feedback = [f['feedback_data'] for f in existing_feedback_res.data]
+                existing_feedback_res = self.client.table('feedback_history').select('feedback_data').eq('session_id', session_id).execute()
+                existing_feedback = [f['feedback_data'] for f in existing_feedback_res.data]
 
-            for feedback in data_dict['feedback_history']:
-                if feedback not in existing_feedback:
-                    self.add_feedback(session_id, feedback)
+                for feedback in user_data.feedback_history:
+                    if feedback not in existing_feedback:
+                        self.add_feedback(session_id, feedback)
             
             return session_id
         except APIError as e:
-            raise ValueError(f"Failed to save user data: {str(e)}")
+            logger.error(f"A Supabase API error occurred: {e.message}")
+            raise ValueError(f"Failed to save user data due to a database error: {e.message}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred in save_user_data: {e}")
+            raise
 
     def load_user_data(self, session_id: str) -> "UserData":
         """

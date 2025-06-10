@@ -697,12 +697,8 @@ class DesignStrategistAgent(BaseAgent):
         userdata.problem_statement = problem_statement
         userdata.status = "ready_for_evaluation"
 
-        # TODO: Future feature - Implement database persistence
-        # session_data = {
-        #     'problem_statement': problem_statement,
-        #     'status': userdata.status
-        # }
-        # db.save_design_session(userdata.user_id, session_data)
+        # Persist the updated state to the database
+        userdata.save_state()
 
         return "I've refined your problem statement. Let's work on proposing solutions."
 
@@ -735,8 +731,8 @@ class DesignStrategistAgent(BaseAgent):
         }
         userdata.design_iterations.append(iteration)
 
-        # TODO: Future feature - Implement database persistence
-        # ...
+        # Persist the updated state to the database
+        userdata.save_state()
 
         return f"Solution captured. Transferring to the Design Evaluator for feedback."
 
