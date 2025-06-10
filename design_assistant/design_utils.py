@@ -1,15 +1,26 @@
-import os
-import yaml
+"""
+Utility functions for the Design Assistant application.
+"""
 
-def load_prompt(filename):
-    """Load a prompt from a YAML file."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    prompt_path = os.path.join(script_dir, 'prompts', filename)
+import yaml
+import os
+from typing import Dict, Any
+
+def load_prompt(prompt_file: str) -> str:
+    """
+    Load an instruction prompt from a YAML file.
     
-    try:
-        with open(prompt_path, 'r') as file:
-            prompt_data = yaml.safe_load(file)
-            return prompt_data.get('instructions', '')
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        print(f"Error loading prompt file {filename}: {e}")
-        return "" 
+    Args:
+        prompt_file (str): Path to the prompt file
+        
+    Returns:
+        str: The instruction string from the prompt file.
+        
+    Raises:
+        FileNotFoundError: If the prompt file doesn't exist
+        yaml.YAMLError: If the prompt file is invalid YAML
+    """
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', prompt_file)
+    with open(prompt_path, 'r') as f:
+        prompt_data = yaml.safe_load(f)
+        return prompt_data.get('instructions', '') 
