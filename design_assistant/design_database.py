@@ -31,7 +31,6 @@ import logging
 from supabase import create_client, Client
 from supabase._sync.client import SupabaseException
 from postgrest.exceptions import APIError
-from dotenv import load_dotenv
 import json
 from dataclasses import asdict
 
@@ -65,7 +64,6 @@ class DesignDatabase:
         Raises:
             ValueError: If Supabase URL or key is not provided and not found in environment variables.
         """
-        load_dotenv()
         self.supabase_url = supabase_url or os.getenv('SUPABASE_URL')
         self.supabase_key = supabase_key or os.getenv('SUPABASE_KEY')
         
