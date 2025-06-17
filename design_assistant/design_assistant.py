@@ -460,17 +460,29 @@ class DesignCoachAgent(BaseAgent):
     @function_tool
     async def identify_user(self, first_name: str, last_name: str) -> str:
         """
-        Identifies the user by their first and last name.
+        Identifies the user and checks for previous design sessions.
         """
         userdata: UserData = self.session.userdata
         userdata.first_name = first_name
         userdata.last_name = last_name
         userdata.user_id = userdata.db.get_or_create_user(first_name, last_name)
-        userdata.status = "awaiting_design_challenge"
         
-        response_message = f"Thank you, {first_name}. Now, please describe your design challenge, your target users, and your emotional goals."
+        sessions = userdata.db.get_user_sessions(userdata.user_id)
+        
+        if not sessions:
+            userdata.status = "awaiting_design_challenge"
+            response_message = f"Thank you, {first_name}. It looks like you're a new user. To get started, please describe your design challenge, your target users, and your emotional goals."
+            await self.session.say(response_message)
+            return "New user identified. The conversation can now proceed to the design challenge."
+
+        session_list_str = "\n".join([f"- Session ID: {s['id']}, Challenge: '{s['design_challenge']}' (Created: {s['created_at']})" for s in sessions])
+        response_message = (
+            f"Welcome back, {first_name}! I found the following previous sessions:\n"
+            f"{session_list_str}\n\n"
+            "Would you like to load one of these sessions? If so, please tell me which Session ID you'd like to load. Otherwise, we can start a new design challenge."
+        )
         await self.session.say(response_message)
-        return f"User {first_name} {last_name} identified. The conversation can now proceed to the design challenge."
+        return f"Returning user identified with {len(sessions)} previous session(s). User has been prompted to select a session or start a new one."
 
     @function_tool
     async def capture_design_challenge(self, design_challenge: str, target_users: list[str], emotional_goals: list[str]) -> str:
@@ -590,7 +602,7 @@ class DesignStrategistAgent(BaseAgent):
         userdata.problem_statement = problem_statement
         userdata.status = "ready_for_evaluation"
 
-        # Persist the updated state to the database
+        # Persist the updated state to the datletes vabase
         userdata.save_state()
 
         return "I've refined your problem statement. Let's work on proposing solutions."
