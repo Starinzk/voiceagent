@@ -333,8 +333,9 @@ class BaseAgent(Agent):
         logger.info(f"Entering {agent_name}")
 
         userdata: UserData = self.session.userdata
-        if userdata.ctx and userdata.ctx.room:
-            await userdata.ctx.room.local_participant.set_attributes({"agent": agent_name})
+        # The following line is removed because it causes a race condition.
+        # if userdata.ctx and userdata.ctx.room:
+        #     await userdata.ctx.room.local_participant.set_attributes({"agent": agent_name})
 
         # Create a personalized prompt based on user identification
         custom_instructions = self.instructions
@@ -485,6 +486,49 @@ class DesignCoachAgent(BaseAgent):
         return f"Returning user identified with {len(sessions)} previous session(s). User has been prompted to select a session or start a new one."
 
     @function_tool
+    async def select_session_to_load(self, session_id: str) -> str:
+        """
+        Selects a session to load based on the user's choice.
+        """
+        userdata: UserData = self.session.userdata
+        userdata.pending_session_id = session_id
+        
+        response_message = f"Great. I have session {session_id} ready to load. Please say 'continue' or 'proceed' to load the session."
+        await self.session.say(response_message)
+        return f"Session {session_id} is now pending and ready to be loaded."
+
+    @function_tool
+    async def load_selected_session(self, context: RunContext_T) -> Agent:
+        """
+        Loads the previously selected session and transfers to the appropriate agent.
+        """
+        userdata: UserData = self.session.userdata
+        if not userdata.pending_session_id:
+            await self.session.say("I'm sorry, you haven't selected a session to load yet. Please choose a session first.")
+            return self
+
+        session_id = userdata.pending_session_id
+        
+        try:
+            userdata.load_state(session_id)
+            userdata.pending_session_id = None  # Clear the pending ID
+            
+            # Determine the next agent based on the loaded session's status
+            next_agent_name = "design_strategist" # Default
+            if userdata.status in ["evaluation_complete", "ready_for_evaluation"]:
+                 next_agent_name = "design_evaluator"
+            elif userdata.status in ["problem_defined", "awaiting_problem_statement"]:
+                 next_agent_name = "design_strategist"
+
+            await self.session.say(f"Session {session_id} loaded successfully. Transferring you to the {next_agent_name.replace('_', ' ')}.")
+            return await self._transfer_to_agent(next_agent_name, context)
+
+        except ValueError as e:
+            await self.session.say(f"I'm sorry, I couldn't load session {session_id}. Reason: {e}. Let's start a new design challenge instead.")
+            userdata.pending_session_id = None
+            return self
+
+    @function_tool
     async def capture_design_challenge(self, design_challenge: str, target_users: list[str], emotional_goals: list[str]) -> str:
         '''
         Capture the core components of a new design challenge.
@@ -553,10 +597,15 @@ class DesignStrategistAgent(BaseAgent):
         )
 
     async def on_enter(self) -> None:
-        '''
-        Set initial status when agent enters.
-        '''
-        self.session.userdata.status = "awaiting_problem_statement"
+        """
+        Set initial status when agent enters. If a problem statement already exists,
+        it's assumed we are continuing a session, so the status is not reset.
+        """
+        # Only set the initial status if a problem statement hasn't been defined yet.
+        # This prevents overwriting the status of a loaded session.
+        if not self.session.userdata.problem_statement:
+            self.session.userdata.status = "awaiting_problem_statement"
+
         await super().on_enter()
 
     @function_tool
@@ -723,26 +772,14 @@ class DesignEvaluatorAgent(BaseAgent):
         )
 
     async def on_enter(self) -> None:
-        '''
-        Set initial status and provide context to the LLM when the agent enters.
-        '''
-        self.session.userdata.status = "evaluation_complete"
-        userdata: UserData = self.session.userdata
-
-        # Create a new system message with the problem statement and proposed solution.
-        # This will be added to the chat history for the LLM to use as context.
-        contextual_message = (
-            "The user has provided the following context for evaluation:\n\n"
-            f"**Problem Statement:**\n{userdata.problem_statement}\n\n"
-            f"**Proposed Solution:**\n{userdata.proposed_solution}\n\n"
-            "Please begin by acknowledging that you have received this context, "
-            "then proceed with your evaluation."
-        )
-        
-        # Add the context to the chat history.
-        new_chat_ctx = self.chat_ctx.copy()
-        new_chat_ctx.add_message(role="system", content=contextual_message)
-        await self.update_chat_ctx(new_chat_ctx)
+        """
+        Set initial status when agent enters. If a solution already exists,
+        it's assumed we are continuing a session, so the status is not reset.
+        """
+        # Only set the initial status if a solution hasn't been proposed yet.
+        # This prevents overwriting the status of a loaded session.
+        if not self.session.userdata.proposed_solution:
+            self.session.userdata.status = "ready_for_evaluation"
 
         await super().on_enter()
 
