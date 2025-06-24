@@ -33,10 +33,9 @@ Future Considerations:
 - Usage analytics
 """
 
-import logging
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, AsyncIterable
 from datetime import datetime
 import json
 import asyncio
@@ -44,17 +43,39 @@ import sys
 
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, WorkerType, cli, WorkerPermissions, JobRequest
-from livekit.agents.llm import function_tool
-from livekit.agents.voice import Agent, AgentSession, RunContext
+from livekit.agents.llm import ChatContext, function_tool, ChatMessage
+from livekit.agents.voice import Agent, AgentSession, RunContext, room_io
+from livekit.agents import stt
+from livekit.rtc import ConnectionState
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from design_assistant.design_utils import load_prompt
 from design_assistant.design_database import DesignDatabase
 
-logger = logging.getLogger("design-assistant")
-logger.setLevel(logging.INFO)
 
 load_dotenv()
+
+# --- Environment Variable Check ---
+REQUIRED_ENV_VARS = [
+    "SUPABASE_URL",
+    "SUPABASE_KEY",
+    "OPENAI_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "CARTESIA_API_KEY",
+    "LIVEKIT_URL",
+    "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET",
+]
+
+missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+if missing_vars:
+    print("FATAL ERROR: The following required environment variables are not set:")
+    for var in missing_vars:
+        print(f"- {var}")
+    print("\nPlease set them in your .env file before running the application.")
+    sys.exit(1)
+# --- End of Environment Variable Check ---
+
 
 # Initialize the design database
 print("--- DATABASE: Initializing DesignDatabase at module level ---")
@@ -282,20 +303,16 @@ class UserData:
         loaded_data = self.db.load_user_data(session_id)
         
         # Update all fields except db and agent-related fields
-        for field in self.__dataclass_fields__:
-            if field not in ['db', 'personas', 'prev_agent', 'ctx']:
-                setattr(self, field, getattr(loaded_data, field))
+        for field_info in self.__dataclass_fields__:
+            field_name = field_info.name
+            if field_name not in ['db', 'personas', 'prev_agent', 'ctx']:
+                setattr(self, field_name, getattr(loaded_data, field_name))
 
-RunContext_T = RunContext[UserData]
+# Define a generic type for the RunContext for cleaner type hinting
+from livekit.agents.voice import RunContext as RunContext_T
 
 class BaseAgent(Agent):
-    '''
-    Base class for all design agents, providing common functionality.
-
-    This class handles agent initialization, context management, and chat history
-    truncation. It ensures a smooth transition of context when switching between
-    different agents in the design workflow.
-    '''
+    '''Base class for all agents in the design workflow.'''
     def __init__(
         self,
         *,
@@ -311,64 +328,80 @@ class BaseAgent(Agent):
     def _set_agent_name(self, name: str):
         self.agent_name = name
 
+    async def _llm_stream_to_str_stream(self, stream: AsyncIterable) -> AsyncIterable[str]:
+        """Converts a stream of LLM ChatChunk objects to a stream of strings."""
+        async for chunk in stream:
+            if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'content') and chunk.delta.content:
+                yield chunk.delta.content
+
     async def on_enter(self) -> None:
-        '''
-        Initialize the agent when entering a new session.
+        """Generic entry logic for agents."""
+        if self.user_data.is_identified():
+            return
         
-        Design Decisions:
-        - Simple initialization
-        - In-memory state only
-        - No persistence
+        # This is the introductory message for new, unidentified users
+        await self.speak("Welcome to the Design Assistant. I am your Design Coach. To begin, please tell me your first and last name.")
+
+    async def on_user_turn_completed(self, turn_ctx, new_message: ChatMessage) -> None:
+        """
+        This hook is called whenever the user finishes speaking.
+        We use it to capture the user's transcript and send it over the data
+        channel with the correct identity. This is the single source of truth
+        for the user's side of the conversation.
+        """
+        if new_message.content:
+            # The content can be a list of parts, we want to join them into a single string
+            transcript = "".join(str(part) for part in new_message.content)
+            await self.send_user_transcript(transcript, is_final=True)
+
+    async def speak(self, text_or_stream: str | AsyncIterable[str]):
+        """
+        Speak the provided text via TTS and send the transcript over the data channel.
+        This function now separates the TTS action from the transcript sending action.
+        """
+        if isinstance(text_or_stream, str):
+            # If it's a string, speak it and send the transcript
+            await self._send_agent_transcript(text_or_stream, is_final=True)
+            await self.session.say(text_or_stream)
+        else:
+            # If it's a stream, we need to collect it first to send the full
+            # transcript, while still streaming the audio output.
+            collected_chunks = []
+            async def text_iterator():
+                nonlocal collected_chunks
+                async for chunk in text_or_stream:
+                    collected_chunks.append(chunk)
+                    await self._send_agent_transcript(chunk, is_final=False)
+                    yield chunk
+
+            # Speak the stream
+            await self.session.say(text_iterator())
+
+            # Once the stream is finished, send the full transcript
+            full_text = "".join(collected_chunks)
+            await self._send_agent_transcript(full_text, is_final=True)
+
+    async def _send_agent_transcript(self, text: str, is_final: bool):
+        """Sends the agent's speech over the data channel."""
+        if not self.user_data.ctx or not self.user_data.ctx.room:
+            print("Warning: Agent has no active session or room, cannot send data.")
+            return
+
+        chat_message = {
+            "message": text,
+            "is_final": is_final,
+            "from": {
+                "identity": self.agent_name or "design_agent",
+                "name": self.agent_name or "Design Agent",
+            },
+            "timestamp": int(datetime.now().timestamp() * 1000),
+        }
+        json_message = json.dumps(chat_message)
         
-        Limitations:
-        - No authentication
-        - No session persistence
-        
-        Future Improvements:
-        - Database persistence
-        - Authentication
-        - Session persistence
-        '''
-        agent_name = self.__class__.__name__
-        logger.info(f"Entering {agent_name}")
-
-        userdata: UserData = self.session.userdata
-        # The following line is removed because it causes a race condition.
-        # if userdata.ctx and userdata.ctx.room:
-        #     await userdata.ctx.room.local_participant.set_attributes({"agent": agent_name})
-
-        # Create a personalized prompt based on user identification
-        custom_instructions = self.instructions
-        if userdata.is_identified():
-            custom_instructions += f"\n\nYou are speaking with {userdata.first_name} {userdata.last_name}."
-        
-        self.llm.instructions = custom_instructions
-
-        chat_ctx = self.chat_ctx.copy()
-
-        # Copy context from previous agent if it exists
-        if userdata.prev_agent:
-            items_copy = self._truncate_chat_ctx(
-                userdata.prev_agent.chat_ctx.items, keep_function_call=True
-            )
-            existing_ids = {item.id for item in chat_ctx.items}
-            items_copy = [item for item in items_copy if item.id not in existing_ids]
-            chat_ctx.items.extend(items_copy)
-
-        chat_ctx.add_message(
-            role="system",
-            content=f"You are the {agent_name}. {userdata.summarize()}"
+        print(f"DEBUG: Sending agent transcript: {json_message}")
+        await self.user_data.ctx.room.local_participant.publish_data(
+            json_message, topic="lk-chat-topic"
         )
-        await self.update_chat_ctx(chat_ctx)
-
-        logger.info(f"ON_ENTER: Generating reply for {agent_name} with instructions: {self.llm.instructions[:100]}...")
-        for i, item in enumerate(self.chat_ctx.items):
-            if hasattr(item, 'role'):
-                logger.info(f"  - Chat history[{i}]: {item.role} - {item.content[:100]}...")
-            else:
-                logger.info(f"  - Chat history[{i}]: {type(item)}")
-
-        self.session.generate_reply()
 
     def _truncate_chat_ctx(
         self,
@@ -377,354 +410,367 @@ class BaseAgent(Agent):
         keep_system_message: bool = False,
         keep_function_call: bool = False,
     ) -> list:
-        '''
-        Truncate the chat context to keep the last n messages.
-        
-        Design Decisions:
-        - Simple truncation
-        - In-memory only
-        - No persistence
-        
-        Limitations:
-        - No context persistence
-        - No context sharing
-        
-        Future Improvements:
-        - Database persistence
-        - Context sharing
-        '''
-        def _valid_item(item) -> bool:
-            if not keep_system_message and item.type == "message" and item.role == "system":
-                return False
-            if not keep_function_call and item.type in ["function_call", "function_call_output"]:
-                return False
-            return True
+        if not items:
+            return []
 
-        new_items = []
-        for item in reversed(items):
-            if _valid_item(item):
-                new_items.append(item)
-            if len(new_items) >= keep_last_n_messages:
-                break
-        new_items = new_items[::-1]
+        def _is_valid_message(item) -> bool:
+            return isinstance(item, ChatMessage) and item.content
 
-        while new_items and new_items[0].type in ["function_call", "function_call_output"]:
-            new_items.pop(0)
+        # Separate system message if it exists
+        system_message = None
+        if keep_system_message and items and _is_valid_message(items[0]) and items[0].role == 'system':
+            system_message = items.pop(0)
 
-        return new_items
+        # Filter for valid ChatMessage objects
+        messages = [item for item in items if _is_valid_message(item)]
+
+        # Get the last N messages
+        last_n_messages = messages[-keep_last_n_messages:]
+
+        # Re-add the system message at the beginning
+        if system_message:
+            last_n_messages.insert(0, system_message)
+        
+        return last_n_messages
 
     async def _transfer_to_agent(self, name: str, context: RunContext_T) -> Agent:
         '''
-        Transfer to another agent while preserving context.
-        
-        Design Decisions:
-        - Simple transfer mechanism
-        - In-memory context preservation
-        - No persistence
-        
-        Limitations:
-        - No session persistence
-        - No multi-agent coordination
-        
-        Future Improvements:
-        - Database persistence
-        - Multi-agent coordination
-        - Session persistence
+        Transfer control to another agent.
+        This is a common utility function that should be on the base agent.
         '''
-        userdata = context.userdata
-        current_agent = context.session.current_agent
-        next_agent = userdata.personas[name]
-        userdata.prev_agent = current_agent
+        userdata: UserData = self.user_data
+        
+        # Set previous agent for context handoff
+        userdata.prev_agent = self
+        
+        # Get the next agent from the shared personas dictionary
+        next_agent = userdata.personas.get(name)
+        if not next_agent:
+            # Fallback or error handling
+            await self.speak(f"Sorry, I could not find the {name} agent.")
+            return self
+
+        # Update the LLM context for the next agent
+        next_agent.llm.chat_ctx = self.llm.chat_ctx
 
         return next_agent
 
+    async def send_user_transcript(self, text: str, is_final: bool):
+        """Sends the user's transcribed text over the data channel with the correct identity."""
+        if not self.user_data.ctx or not self.user_data.ctx.room:
+            print("Warning: Cannot send user transcript, room not available.")
+            return
+
+        # Find the human participant by looking for a participant that is not an agent.
+        # This is more robust than assuming the user is always remote.
+        user_participant = None
+        all_participants = list(self.user_data.ctx.room.remote_participants.values()) + [self.user_data.ctx.room.local_participant]
+        
+        agent_identities = set(self.user_data.personas.keys())
+        agent_identities.add(self.agent_name)  # Add current agent's name for good measure
+
+        print(f"DEBUG: All participants in room: {[p.identity for p in all_participants]}")
+        print(f"DEBUG: Known agent identities: {agent_identities}")
+
+        for p in all_participants:
+            if p.identity not in agent_identities:
+                user_participant = p
+                break
+        
+        if not user_participant:
+            print("FATAL: Could not find a human participant in the room to attribute transcript to.")
+            # As a last resort, use a generic identity, but this indicates a problem.
+            from_info = {"identity": "user", "name": "User"}
+        else:
+            from_info = {
+                "identity": user_participant.identity,
+                "name": user_participant.name or self.user_data.first_name or "User",
+            }
+
+        chat_message = {
+            "message": text,
+            "is_final": is_final,
+            "from": from_info,
+            "timestamp": int(datetime.now().timestamp() * 1000),
+        }
+        json_message = json.dumps(chat_message)
+        
+        print(f"DEBUG: Sending user transcript: {json_message}")
+
+        # The agent (local participant) publishes the data for everyone to see.
+        await self.user_data.ctx.room.local_participant.publish_data(
+            json_message, topic="lk-chat-topic"
+        )
+
+    @property
+    def user_data(self) -> "UserData":
+        '''Convenience property to access UserData from the session.'''
+        return self.session.userdata
+
 
 class DesignCoachAgent(BaseAgent):
-    '''
-    The first agent that the user interacts with. Its goal is to
-    identify the user and understand their design challenge.
-    '''
+    '''An agent that helps users articulate their design challenge.'''
     def __init__(self) -> None:
         super().__init__(
             instructions=load_prompt('design_coach.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4-turbo", timeout=30.0),
-            tts=cartesia.TTS(),
-            vad=silero.VAD.load(min_silence_duration=0.8),
+            llm=openai.LLM(model="gpt-4-turbo", timeout=120.0),
+            tts=openai.TTS(),
+            vad=silero.VAD.load(min_silence_duration=1.2)
         )
         self._set_agent_name("design_coach")
 
     async def on_enter(self) -> None:
-        self.session.userdata.status = "awaiting_user_identification"
+        self.user_data.status = "awaiting_problem_definition"
         await super().on_enter()
 
     @function_tool
     async def identify_user(self, first_name: str, last_name: str) -> str:
-        """
-        Identifies the user and checks for previous design sessions.
-        """
-        userdata: UserData = self.session.userdata
+        '''
+        Identifies the user by their first and last name.
+        This is the first step in the design process.
+        '''
+        userdata = self.user_data
         userdata.first_name = first_name
         userdata.last_name = last_name
-        userdata.user_id = userdata.db.get_or_create_user(first_name, last_name)
         
-        sessions = userdata.db.get_user_sessions(userdata.user_id)
-        
-        if not sessions:
-            userdata.status = "awaiting_design_challenge"
-            response_message = f"Thank you, {first_name}. It looks like you're a new user. To get started, please describe your design challenge, your target users, and your emotional goals."
-            await self.session.say(response_message)
-            return "New user identified. The conversation can now proceed to the design challenge."
+        try:
+            user_id, is_new = userdata.db.get_or_create_user(first_name, last_name)
+            userdata.user_id = user_id
+            
+            # Now, check for past sessions
+            past_sessions = userdata.db.get_user_sessions(user_id)
+            
+            if not is_new and past_sessions:
+                # Returning user with past sessions
+                session_list = "\n".join(
+                    [
+                        f"- Session ID: {s['id']}, Created: {s['created_at']}"
+                        for s in past_sessions
+                    ]
+                )
+                response = f"Welcome back, {first_name}. I found these past sessions:\n{session_list}\nWould you like to load one of these sessions, or start a new one?"
+            else:
+                # New user, or returning user with no past sessions
+                response = f"Thank you, {first_name}. I've created a new profile for you. To get started, please describe your design challenge."
 
-        session_list_str = "\n".join([f"- Session ID: {s['id']}, Challenge: '{s['design_challenge']}' (Created: {s['created_at']})" for s in sessions])
-        response_message = (
-            f"Welcome back, {first_name}! I found the following previous sessions:\n"
-            f"{session_list_str}\n\n"
-            "Would you like to load one of these sessions? If so, please tell me which Session ID you'd like to load. Otherwise, we can start a new design challenge."
-        )
-        await self.session.say(response_message)
-        return f"Returning user identified with {len(sessions)} previous session(s). User has been prompted to select a session or start a new one."
+            await self.speak(response)
+            return "User identified and greeted."
+
+        except Exception as e:
+            print(f"Database error in identify_user: {e}")
+            response = f"I'm sorry, {first_name}. I encountered an error accessing my database. Let's proceed for now. Please describe your design challenge."
+            await self.speak(response)
+            return "Error identifying user, but proceeded with session."
 
     @function_tool
     async def select_session_to_load(self, session_id: str) -> str:
         """
-        Selects a session to load based on the user's choice.
+        Informs the user that the selected session will be loaded. This function 
+        confirms the user's choice before the actual loading process begins.
+        The subsequent call to `load_selected_session` will perform the state change.
         """
-        userdata: UserData = self.session.userdata
-        userdata.pending_session_id = session_id
-        
-        response_message = f"Great. I have session {session_id} ready to load. Please say 'continue' or 'proceed' to load the session."
-        await self.session.say(response_message)
-        return f"Session {session_id} is now pending and ready to be loaded."
+        response = f"Great. I will load session {session_id} for you now. One moment."
+        await self.speak(response)
+        return "Informing user that session will be loaded."
 
     @function_tool
     async def load_selected_session(self, context: RunContext_T) -> Agent:
-        """
-        Loads the previously selected session and transfers to the appropriate agent.
-        """
-        userdata: UserData = self.session.userdata
+        '''
+        Loads a previously selected design session from the database.
+        This function is called after the user confirms which session to load
+        using `select_session_to_load`.
+        '''
+        userdata = self.user_data
+        
         if not userdata.pending_session_id:
-            await self.session.say("I'm sorry, you haven't selected a session to load yet. Please choose a session first.")
+            # This should not happen if the flow is correct
+            await self.speak("I'm sorry, I don't have a session selected to load.")
             return self
 
-        session_id = userdata.pending_session_id
-        
         try:
-            userdata.load_state(session_id)
-            userdata.pending_session_id = None  # Clear the pending ID
+            # Load the state from the selected session ID
+            userdata.load_state(userdata.pending_session_id)
             
-            # Determine the next agent based on the loaded session's status
-            next_agent_name = "design_strategist" # Default
-            if userdata.status in ["evaluation_complete", "ready_for_evaluation"]:
-                 next_agent_name = "design_evaluator"
-            elif userdata.status in ["problem_defined", "awaiting_problem_statement"]:
-                 next_agent_name = "design_strategist"
-
-            await self.session.say(f"Session {session_id} loaded successfully. Transferring you to the {next_agent_name.replace('_', ' ')}.")
-            return await self._transfer_to_agent(next_agent_name, context)
+            # Speak a confirmation message with loaded data
+            summary = userdata.summarize()
+            await self.speak(f"Session loaded successfully. Here is a summary of our progress:\n{summary}")
+            
+            # Decide which agent to transfer to based on loaded state
+            if userdata.status == "ready_for_evaluation":
+                await self.speak("It looks like we were ready for feedback. I'll transfer you to the Design Evaluator.")
+                return await self._transfer_to_agent("design_evaluator", context)
+            else: # Default to strategist
+                await self.speak("Let's continue refining your solution. I'll transfer you to the Design Strategist.")
+                return await self._transfer_to_agent("design_strategist", context)
 
         except ValueError as e:
-            await self.session.say(f"I'm sorry, I couldn't load session {session_id}. Reason: {e}. Let's start a new design challenge instead.")
-            userdata.pending_session_id = None
+            await self.speak(f"I'm sorry, I couldn't load that session. Error: {e}")
+            return self
+        except Exception as e:
+            print(f"Error loading session: {e}")
+            await self.speak("I encountered an unexpected error while loading your session. Let's start a new one.")
+            userdata.reset() # Reset to a clean state
             return self
 
     @function_tool
-    async def capture_design_challenge(self, design_challenge: str, target_users: list[str], emotional_goals: list[str]) -> str:
+    async def capture_design_challenge(
+        self,
+        design_challenge: str,
+        target_users: Optional[list[str]] = None,
+        emotional_goals: Optional[list[str]] = None,
+    ) -> str:
         '''
-        Capture the core components of a new design challenge.
+        Captures the core components of the user's design challenge.
         '''
-        userdata: UserData = self.session.userdata
+        userdata = self.user_data
+        if not userdata.is_identified():
+            await self.speak("Please identify yourself first using the identify_user function.")
+            return "User not identified."
         
         userdata.design_challenge = design_challenge
         userdata.target_users = target_users
         userdata.emotional_goals = emotional_goals
-        userdata.status = "problem_defined" 
+        
+        response = "Thank you. I have recorded your design challenge. Now, I will transfer you to our Design Strategist to help refine this into a problem statement."
+        await self.speak(response)
+        
         userdata.save_state()
 
-        response_message = "Thank you. I've captured your design challenge. I'll now transfer you to our Design Strategist. Please say 'continue' or 'proceed'."
-        await self.session.say(response_message)
-        return "Design challenge captured. Ready to transfer to the strategist."
+        return "Design challenge captured."
 
     @function_tool
     async def transfer_to_strategist(self, context: RunContext_T) -> Agent:
         '''
-        Transfers the user to the Design Strategist agent.
+        Transfer the user to the Design Strategist agent.
         '''
-        await self.session.say("Handing you over to our Design Strategist.")
+        await self.speak("Transferring you to the Design Strategist.")
         return await self._transfer_to_agent("design_strategist", context)
 
 
 class DesignStrategistAgent(BaseAgent):
     '''
-    An agent responsible for refining problem statements and proposing solutions.
-    
-    The Design Strategist takes the initial design challenge from the Coach
-    and helps the user refine it into a structured "How might we..." problem
-    statement. It then guides the user in proposing a solution to that
-    problem. All progress is persisted to the database.
-    
-    Out of Scope:
-    - Technical implementation details
-    - User research
-    - Final design evaluation
+    An agent that refines problem statements and proposes initial solutions.
     '''
     def __init__(self) -> None:
-        '''
-        Initialize the Design Strategist agent with specific configuration.
-        
-        Design Decisions:
-        - Uses GPT-4 for strategic thinking
-        - Deepgram for accurate speech recognition
-        - Cartesia for natural-sounding voice
-        - Silero for reliable voice detection
-        
-        Example Configuration:
-        ```python
-        agent = DesignStrategistAgent()
-        # Agent will use:
-        # - GPT-4 for strategic analysis
-        # - Deepgram for converting speech to text
-        # - Cartesia for converting text to speech
-        # - Silero for detecting when user is speaking
-        ```
-        '''
         super().__init__(
             instructions=load_prompt('design_strategist.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4-turbo", timeout=30.0),
-            tts=cartesia.TTS(),
-            vad=silero.VAD.load(min_silence_duration=0.8)
+            llm=openai.LLM(model="gpt-4-turbo", timeout=120.0),
+            tts=openai.TTS(),
+            vad=silero.VAD.load(min_silence_duration=1.2)
         )
+        self._set_agent_name("design_strategist")
 
     async def on_enter(self) -> None:
         """
-        Set initial status when agent enters. If a problem statement already exists,
-        it's assumed we are continuing a session, so the status is not reset.
+        Provide a greeting and instructions upon entry.
         """
-        # Only set the initial status if a problem statement hasn't been defined yet.
-        # This prevents overwriting the status of a loaded session.
-        if not self.session.userdata.problem_statement:
-            self.session.userdata.status = "awaiting_problem_statement"
+        # Truncate context before the LLM call
+        chat_ctx = self.llm.chat_ctx if hasattr(self.llm, 'chat_ctx') else ChatContext()
+        
+        truncated_messages = self._truncate_chat_ctx(
+            chat_ctx.messages,
+            keep_last_n_messages=4,
+            keep_system_message=True,
+        )
+        chat_ctx.messages = truncated_messages
 
-        await super().on_enter()
+        # Create a new context for the introductory message
+        intro_ctx = ChatContext(messages=[
+            ChatMessage(role="system", content=self.instructions),
+            ChatMessage(role="user", content="Based on the context, what should you say to the user right now? If there's a problem statement, ask if they want to refine it or propose a solution. If not, ask them to create one."),
+        ])
+        
+        # Generate the introductory message
+        stream = await self.llm.chat(chat_ctx=intro_ctx)
+        str_stream = self._llm_stream_to_str_stream(stream)
+        
+        # Speak the introduction
+        await self.speak(str_stream)
 
     @function_tool
     async def refine_problem_statement(self, problem_statement: str) -> str:
         '''
-        Refine the problem statement into a "How might we..." question.
-        
-        Design Decisions:
-        - Simple text-based refinement
-        - In-memory state only
-        - Must use "How might we..." format
-        
-        Example Usage:
-        ```python
-        # Refine problem statement
-        await agent.refine_problem_statement(
-            "How might we create a mobile app that helps busy professionals track their fitness goals while maintaining motivation?"
-        )
-        # Updates in-memory user data
-        # Returns: "I've refined your problem statement. Let's work on proposing solutions."
-        ```
-        
-        Limitations:
-        - No persistence between sessions
-        - No input validation
-        
-        Future Improvements:
-        - Database persistence
-        - Input validation
+        Refines the user's design challenge into a formal "How might we..."
+        problem statement.
         '''
-        userdata: UserData = self.session.userdata
+        userdata = self.user_data
         if not userdata.is_identified():
-            return "Please identify yourself first using the identify_user function."
+            await self.speak("Please identify yourself first using the identify_user function.")
+            return "User not identified."
             
         if not userdata.design_challenge:
-            return "Please capture the design challenge first using the Design Coach agent."
-
-        # Check for "How might we..." format
-        if not problem_statement.lower().startswith("how might we"):
-            return "Problem statement must start with 'How might we...' to follow design thinking best practices."
+            await self.speak("Please provide a design challenge first using the capture_design_challenge function.")
+            return "Design challenge not provided."
 
         # Update user data
         userdata.problem_statement = problem_statement
-        userdata.status = "ready_for_evaluation"
-
-        # Persist the updated state to the datletes vabase
         userdata.save_state()
 
-        return "I've refined your problem statement. Let's work on proposing solutions."
+        # Prepare context for the LLM
+        chat_ctx = ChatContext(messages=[
+            ChatMessage(role="system", content=self.instructions),
+            ChatMessage(role="user", content=f"The user has provided the following problem statement: '{problem_statement}'. What is a good follow-up question to ask them?")
+        ])
+        
+        # Generate the follow-up question
+        try:
+            stream = await self.llm.chat(chat_ctx=chat_ctx)
+            str_stream = self._llm_stream_to_str_stream(stream)
+            response_text = ""
+            async for chunk in str_stream:
+                response_text += chunk
+
+            await self.speak(f"Problem statement updated. {response_text}")
+            return "Problem statement refined and follow-up question asked."
+        except Exception as e:
+            print(f"LLM Error in refine_problem_statement: {e}")
+            await self.speak("Problem statement updated. Now, what's the first step we should take to solve this?")
+            return "Problem statement refined."
 
     @function_tool
     async def propose_solution(self, solution_description: str, key_features: list[str], context: RunContext_T) -> Agent:
         '''
-        Propose a detailed solution with specific features.
-        
-        Args:
-            solution_description (str): A clear, concise description of the proposed solution.
-            key_features (list[str]): A list of specific, key features of the solution.
+        Proposes a solution to the refined problem statement and transfers
+        to the evaluator.
         '''
-        userdata: UserData = self.session.userdata
+        userdata = self.user_data
         if not userdata.is_identified():
-            return "Please identify yourself first using the identify_user function."
+            await self.speak("Please identify yourself first using the identify_user function.")
+            return self
             
         if not userdata.problem_statement:
-            return "Please refine the problem statement first using the refine_problem_statement function."
+            await self.speak("Please refine the problem statement first using the refine_problem_statement function.")
+            return self
 
         # Update user data
         userdata.proposed_solution = solution_description
-        userdata.status = "evaluation_complete" # Ready for the evaluator
-        
-        # Track this iteration
-        iteration = {
-            'problem_statement': userdata.problem_statement,
-            'solution': solution_description,
-            'key_features': key_features,
-            'timestamp': datetime.now().isoformat()
-        }
-        userdata.design_iterations.append(iteration)
-
-        # Persist the updated state to the database
+        userdata.design_iterations.append({
+            "solution": solution_description,
+            "features": key_features,
+            "timestamp": datetime.now().isoformat()
+        })
+        userdata.status = "ready_for_evaluation"
         userdata.save_state()
 
-        await self.session.say(f"Solution captured. Transferring to the Design Evaluator for feedback.")
+        await self.speak("Thank you. I have recorded your proposed solution. Now, I will transfer you to our Design Evaluator for feedback.")
         return await self._transfer_to_agent("design_evaluator", context)
 
     @function_tool
     async def transfer_to_design_coach(self, context: RunContext_T) -> Agent:
         '''
-        Transfer the user back to the Design Coach agent.
+        Transfer the user back to the Design Coach for clarification.
         
-        Design Decisions:
-        - Preserves conversation context
-        - Provides personalized message
-        - Smooth transition between agents
-        
-        Example Usage:
-        ```python
-        # When user needs to clarify design challenge
-        await agent.transfer_to_design_coach(context)
-        # Transfers to coach with context
-        # Returns: Design Coach agent instance
-        ```
-        
-        Limitations:
-        - No real-time updates
-        - No multi-agent coordination
-        - No session persistence
-        
-        Future Improvements:
-        - Real-time updates
-        - Multi-agent coordination
-        - Session persistence
+        This is useful when the conversation has lost direction and needs to
+        be re-centered on the user's primary goals.
         '''
-        userdata: UserData = self.session.userdata
+        userdata = self.user_data
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you back to our Design Coach who can help you further clarify your intent."
         else:
             message = "I'll transfer you back to our Design Coach who can help you further clarify your intent."
-        await self.session.say(message)
+        await self.speak(message)
         return await self._transfer_to_agent("design_coach", context)
 
     @function_tool
@@ -732,172 +778,126 @@ class DesignStrategistAgent(BaseAgent):
         '''
         Transfer the user to the Design Evaluator agent.
         '''
-        userdata: UserData = self.session.userdata
+        userdata: UserData = self.user_data
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Evaluator for structured feedback."
         else:
             message = "I'll transfer you to our Design Evaluator for structured feedback."
-        await self.session.say(message)
+        await self.speak(message)
         return await self._transfer_to_agent("design_evaluator", context)
 
 
 class DesignEvaluatorAgent(BaseAgent):
     '''
     An agent responsible for evaluating solutions and providing structured feedback.
-
-    The Design Evaluator is intended to provide structured, objective feedback on a
-    proposed solution.
-    
-    Out of Scope:
-    - Solution generation
-    - User research
-    - Technical implementation
     '''
     def __init__(self) -> None:
-        '''
-        Initialize the Design Evaluator agent with specific configuration.
-        
-        Design Decisions:
-        - Uses GPT-4 for comprehensive analysis
-        - Deepgram for accurate speech recognition
-        - Cartesia for natural-sounding voice
-        - Silero for reliable voice detection
-        '''
         super().__init__(
             instructions=load_prompt('design_evaluator.yaml'),
             stt=deepgram.STT(),
-            llm=openai.LLM(model="gpt-4-turbo", timeout=30.0),
-            tts=cartesia.TTS(),
-            vad=silero.VAD.load(min_silence_duration=0.8)
+            llm=openai.LLM(model="gpt-4-turbo", timeout=120.0),
+            tts=openai.TTS(),
+            vad=silero.VAD.load(min_silence_duration=1.2)
         )
+        self._set_agent_name("design_evaluator")
 
     async def on_enter(self) -> None:
         """
-        Set initial status when agent enters. If a solution already exists,
-        it's assumed we are continuing a session, so the status is not reset.
+        Set initial status when agent enters.
         """
-        # Only set the initial status if a solution hasn't been proposed yet.
-        # This prevents overwriting the status of a loaded session.
-        if not self.session.userdata.proposed_solution:
-            self.session.userdata.status = "ready_for_evaluation"
-
+        if not self.user_data.proposed_solution:
+            self.user_data.status = "ready_for_evaluation"
         await super().on_enter()
 
     @function_tool
     async def provide_feedback(self, feedback: str) -> str:
         '''
         Provide feedback on the proposed solution.
-        
-        Design Decisions:
-        - Simple text-based feedback
-        - In-memory state only
-        
-        Limitations:
-        - No persistence between sessions
-        - No input validation
-        
-        Future Improvements:
-        - Database persistence
-        - Input validation
         '''
-        userdata: UserData = self.session.userdata
+        userdata = self.user_data
         if not userdata.is_identified():
-            return "Please identify yourself first using the identify_user function."
+            await self.speak("Please identify yourself first using the identify_user function.")
+            return "User not identified."
             
         if not userdata.problem_statement:
-            return "Please refine the problem statement first using the refine_problem_statement function."
+            await self.speak("Please refine the problem statement first using the refine_problem_statement function.")
+            return "Problem statement not refined."
 
-        # Update user data
-        userdata.feedback_history.append(feedback)
+        userdata.feedback_history.append({"feedback": feedback, "timestamp": datetime.now().isoformat()})
+        userdata.status = "evaluation_complete"
         userdata.save_state()
 
-        return "Thank you for your feedback. I've recorded it in the session."
+        response = "Thank you for your feedback. I've recorded it. I am now transferring you back to the Design Strategist to iterate on the solution."
+        await self.speak(response)
+        return "Feedback recorded."
 
     @function_tool
     async def transfer_to_design_strategist(self, context: RunContext_T) -> Agent:
         '''
         Transfer the user to the Design Strategist agent.
         '''
-        userdata: UserData = self.session.userdata
+        userdata: UserData = self.user_data
         if userdata.is_identified():
             message = f"Thank you, {userdata.first_name}. I'll transfer you to our Design Strategist for further refinement."
         else:
             message = "I'll transfer you to our Design Strategist for further refinement."
-        await self.session.say(message)
+        await self.speak(message)
         return await self._transfer_to_agent("design_strategist", context)
 
 
-async def spawn_worker(room_name: str):
-    """This function will be called to spawn a new agent in a specific room."""
-    print(f"Spawning a new worker for room: {room_name}")
-    
-    worker_opts = WorkerOptions(
-        entrypoint_fnc=entrypoint,
-        worker_type=WorkerType.PUBLISHER,
-        agent_name="design_assistant_worker", # Use a different name for spawned workers
-        ws_url=os.getenv('LIVEKIT_URL'),
-        api_key=os.getenv('LIVEKIT_API_KEY'),
-        api_secret=os.getenv('LIVEKIT_API_SECRET'),
-        room_name=room_name, # Assign the specific room
-    )
-    # This starts a new agent process
-    process = await cli.run_app(worker_opts)
-    print(f"Worker process for room {room_name} started: {process}")
-
-
-async def manager_entrypoint(ctx: JobContext):
-    """The entrypoint for the main manager agent."""
-    print(f"Manager agent connected to room: {ctx.room.name}")
-
-    async def handle_data(data: str, participant, room):
-        try:
-            payload = json.loads(data)
-            if payload.get('type') == 'AGENT_REQUEST':
-                user_room = payload.get('userRoomName')
-                if user_room:
-                    print(f"Received agent request for room: {user_room}")
-                    # Use asyncio.create_task to spawn the worker without blocking
-                    asyncio.create_task(spawn_worker(user_room))
-        except Exception as e:
-            print(f"Error handling agent request: {e}")
-
-    ctx.room.on('data_received', handle_data)
-    print("Manager is listening for agent requests...")
-
-# This is the entrypoint for the worker agents
 async def entrypoint(ctx: JobContext):
     """Initialize and start the design assistant application in a worker."""
     print(f"\n=== WORKER AGENT JOB RECEIVED ===")
     print(f"Joining room: {ctx.room.name}")
     
+    # It is critical to connect to the room before starting the agent session
+    await ctx.connect()
+    print(f"Successfully connected to room: {ctx.room.name}")
+    
     userdata = UserData(ctx=ctx, db=db)
     
-    # Initialize all agents and store them in the userdata
     userdata.personas["design_coach"] = DesignCoachAgent()
     userdata.personas["design_strategist"] = DesignStrategistAgent()
     userdata.personas["design_evaluator"] = DesignEvaluatorAgent()
 
     session = AgentSession[UserData](userdata=userdata)
     
-    # The first agent to be used in the session
     initial_agent = userdata.personas["design_coach"]
     
-    await session.start(agent=initial_agent, room=ctx.room)
+    output_options = room_io.RoomOutputOptions(transcription_enabled=True)
+    await session.start(agent=initial_agent, room=ctx.room, room_output_options=output_options)
 
 async def request_fnc(req: JobRequest):
     print("Received job request", req)
-    await req.accept()
+    await req.accept(
+        identity="design_coach",
+        metadata=json.dumps({"is_agent": "true"})
+    )
 
 if __name__ == "__main__":
     print("\n=== STARTING AGENT WORKER ===")
-    
+
+    permissions = WorkerPermissions(
+        can_publish=True,
+        can_publish_data=True,
+        can_subscribe=True,
+        hidden=False,
+    )
+
     worker_opts = WorkerOptions(
         request_fnc=request_fnc,
-        entrypoint_fnc=entrypoint # Add the default entrypoint
+        entrypoint_fnc=entrypoint,
+        permissions=permissions,
     )
-    
+
     # Add 'start' to the command-line arguments if no command is provided
-    if len(sys.argv) < 2 or sys.argv[1] not in ['connect', 'console', 'dev', 'download-files', 'start']:
-        sys.argv.insert(1, 'start')
+    if len(sys.argv) < 2 or sys.argv[1] not in [
+        "connect",
+        "console",
+        "dev",
+        "download-files",
+        "start",
+    ]:
+        sys.argv.insert(1, "start")
 
     cli.run_app(worker_opts)

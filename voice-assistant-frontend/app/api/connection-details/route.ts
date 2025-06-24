@@ -69,7 +69,8 @@ async function dispatchAgentJob(roomName: string) {
 export async function GET(req: NextRequest) {
   try {
     const roomName = `design-room-${uuidv4()}`;
-    const participantIdentity = `user-${uuidv4()}`;
+    // Use a consistent identity for the user for now.
+    const participantIdentity = `user-jane-doe`;
 
     // 1. Dispatch a job to an available agent.
     await dispatchAgentJob(roomName);

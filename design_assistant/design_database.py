@@ -89,7 +89,7 @@ class DesignDatabase:
             if field not in data or data[field] is None or (isinstance(data[field], str) and not data[field].strip()):
                 raise ValueError(f"Required field '{field}' is missing or empty")
 
-    def get_or_create_user(self, first_name: str, last_name: str) -> str:
+    def get_or_create_user(self, first_name: str, last_name: str) -> tuple[str, bool]:
         """
         Get a user by name or create if not exists.
         
@@ -98,7 +98,8 @@ class DesignDatabase:
             last_name (str): The user's last name
             
         Returns:
-            str: The user's ID (either existing or newly created)
+            tuple[str, bool]: A tuple containing the user's ID and a boolean 
+                              indicating if the user was newly created.
             
         Raises:
             ValueError: If first_name or last_name is empty
@@ -117,7 +118,7 @@ class DesignDatabase:
             if response.data:
                 user_id = response.data[0]['id']
                 logger.info(f"Found existing user: {first_name} {last_name} (ID: {user_id})")
-                return user_id
+                return user_id, False
                 
             # Create new user
             response = self.client.table('users') \
@@ -129,7 +130,7 @@ class DesignDatabase:
                 
             user_id = response.data[0]['id']
             logger.info(f"Created new user: {first_name} {last_name} (ID: {user_id})")
-            return user_id
+            return user_id, True
         except APIError as e:
             raise ValueError(f"Failed to get or create user: {str(e)}")
 
@@ -374,7 +375,7 @@ class DesignDatabase:
 
         try:
             # Step 1: Get or create the user and update the user_data object
-            user_id = self.get_or_create_user(user_data.first_name, user_data.last_name)
+            user_id, is_new_user = self.get_or_create_user(user_data.first_name, user_data.last_name)
             user_data.user_id = user_id
             
             # Step 2: Check if a session for this user and challenge already exists
