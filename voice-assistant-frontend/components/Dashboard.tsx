@@ -40,20 +40,20 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-enso-background font-sans">
+    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-white font-sans">
       <div className="text-center max-w-lg mx-auto">
         <Image
           src="/Enso.png"
           alt="Enso Logo"
-          width={120}
-          height={120}
+          width={300}
+          height={300}
           className="mx-auto mb-8"
         />
         <h1 className="text-5xl font-serif text-enso-text mb-4">
           Think Out Loud. Leave With Clarity.
         </h1>
         <p className="text-lg text-enso-text/80 mb-12">
-          Your voice-first design assistant for instant creative clarity.
+          A voice-first design assistant for instant creative clarity.
         </p>
         <button
           onClick={handleStartSession}
