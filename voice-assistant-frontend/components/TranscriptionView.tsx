@@ -1,39 +1,69 @@
-import useCombinedTranscriptions from "@/hooks/useCombinedTranscriptions";
-import * as React from "react";
+"use client";
 
-export default function TranscriptionView() {
-  const combinedTranscriptions = useCombinedTranscriptions();
-  const containerRef = React.useRef<HTMLDivElement>(null);
+import { motion } from "framer-motion";
+import { useEffect, useRef } from "react";
 
-  // scroll to bottom when new transcription is added
-  React.useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [combinedTranscriptions]);
+export interface CustomChatMessage {
+  id: string;
+  from: {
+    identity: string;
+    name: string;
+  };
+  message: string;
+  timestamp: number;
+}
+
+const ChatBubble = ({ msg }: { msg: CustomChatMessage }) => {
+  const isAgent = !msg.from.identity.startsWith("user-");
+  const bubbleAlignment = isAgent ? "self-start" : "self-end";
+  const bubbleBg = isAgent ? "bg-enso-card-bg" : "bg-enso-card";
+  const bubbleTextColor = "text-enso-text";
+
+  const time = new Date(msg.timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
   return (
-    <div className="relative h-[200px] w-[512px] max-w-[90vw] mx-auto">
-      {/* Fade-out gradient mask */}
-      <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-[var(--lk-bg)] to-transparent z-10 pointer-events-none" />
-      <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[var(--lk-bg)] to-transparent z-10 pointer-events-none" />
-
-      {/* Scrollable content */}
-      <div ref={containerRef} className="h-full flex flex-col gap-2 overflow-y-auto px-4 py-8">
-        {combinedTranscriptions.map((segment) => (
-          <div
-            id={segment.id}
-            key={segment.id}
-            className={
-              segment.role === "assistant"
-                ? "p-2 self-start fit-content"
-                : "bg-gray-800 rounded-md p-2 self-end fit-content"
-            }
-          >
-            {segment.text}
-          </div>
-        ))}
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className={`w-full flex ${isAgent ? "justify-start" : "justify-end"}`}
+    >
+      <div
+        className={`relative max-w-lg rounded-2xl py-3 px-5 m-2 shadow-sm ${bubbleBg} ${bubbleTextColor}`}
+      >
+        <p className="font-sans pr-12">{msg.message}</p>
+        <span className="absolute top-3 right-4 text-xs text-enso-text/40">
+          {time}
+        </span>
       </div>
+    </motion.div>
+  );
+};
+
+export default function TranscriptionView({
+  chatMessages,
+}: {
+  chatMessages: CustomChatMessage[];
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="w-full h-full flex flex-col space-y-2 p-4 overflow-y-auto"
+    >
+      {chatMessages.map((msg) => (
+        <ChatBubble key={msg.id} msg={msg} />
+      ))}
     </div>
   );
 }

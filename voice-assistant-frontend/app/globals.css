@@ -1,20 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Playfair+Display:wght@700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --lk-va-bar-width: 72px;
-  --lk-control-bar-height: unset;
-}
+body {
+  color: theme('colors.enso-text');
+  background: theme('colors.enso-background');
 
-.agent-visualizer > .lk-audio-bar {
-  width: 72px;
-}
-
-.lk-agent-control-bar {
-  @apply border-t-0 p-0 h-min mr-4;
-}
-
-.lk-disconnect-button {
-  @apply h-[36px] hover:bg-[#6b221a] hover:text-[white] bg-[#31100c] border-[#6b221a];
+  /* LiveKit Component Theming */
+  --lk-button-foreground: #1a1a1a;
+  --lk-control-button-foreground: #1a1a1a;
+  --lk-control-button-background: transparent;
+  --lk-control-button-background-hover: #f2f2f2;
 }

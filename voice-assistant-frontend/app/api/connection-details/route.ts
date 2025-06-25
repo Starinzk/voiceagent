@@ -1,72 +1,97 @@
 import { AccessToken, AccessTokenOptions, VideoGrant } from "livekit-server-sdk";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { v4 as uuidv4 } from "uuid";
 
 // NOTE: you are expected to define the following environment variables in `.env.local`:
-const API_KEY = process.env.LIVEKIT_API_KEY;
-const API_SECRET = process.env.LIVEKIT_API_SECRET;
-const LIVEKIT_URL = process.env.LIVEKIT_URL;
+const LIVEKIT_URL = process.env.LIVEKIT_URL ?? "";
+const API_KEY = process.env.LIVEKIT_API_KEY ?? "";
+const API_SECRET = process.env.LIVEKIT_API_SECRET ?? "";
 
-// don't cache the results
-export const revalidate = 0;
-
-export type ConnectionDetails = {
-  serverUrl: string;
-  roomName: string;
-  participantName: string;
-  participantToken: string;
-};
-
-export async function GET() {
-  try {
-    if (LIVEKIT_URL === undefined) {
-      throw new Error("LIVEKIT_URL is not defined");
-    }
-    if (API_KEY === undefined) {
-      throw new Error("LIVEKIT_API_KEY is not defined");
-    }
-    if (API_SECRET === undefined) {
-      throw new Error("LIVEKIT_API_SECRET is not defined");
-    }
-
-    // Generate participant token
-    const participantIdentity = `voice_assistant_user_${Math.floor(Math.random() * 10_000)}`;
-    const roomName = `voice_assistant_room_${Math.floor(Math.random() * 10_000)}`;
-    const participantToken = await createParticipantToken(
-      { identity: participantIdentity },
-      roomName
-    );
-
-    // Return connection details
-    const data: ConnectionDetails = {
-      serverUrl: LIVEKIT_URL,
-      roomName,
-      participantToken: participantToken,
-      participantName: participantIdentity,
-    };
-    const headers = new Headers({
-      "Cache-Control": "no-store",
-    });
-    return NextResponse.json(data, { headers });
-  } catch (error) {
-    if (error instanceof Error) {
-      console.error(error);
-      return new NextResponse(error.message, { status: 500 });
-    }
-  }
+if (!LIVEKIT_URL || !API_KEY || !API_SECRET) {
+  throw new Error("Missing LiveKit environment variables");
 }
 
-function createParticipantToken(userInfo: AccessTokenOptions, roomName: string) {
+async function createParticipantToken(userInfo: AccessTokenOptions, roomName: string) {
   const at = new AccessToken(API_KEY, API_SECRET, {
     ...userInfo,
     ttl: "15m",
   });
-  const grant: VideoGrant = {
+  at.addGrant({
     room: roomName,
     roomJoin: true,
     canPublish: true,
     canPublishData: true,
     canSubscribe: true,
+  });
+  return await at.toJwt();
+}
+
+async function dispatchAgentJob(roomName: string) {
+  // The SDK's createJob is unreliable in Next.js, so we do it manually.
+  // This requires creating a special token with agent permissions.
+  const agentToken = new AccessToken(API_KEY, API_SECRET, {
+    identity: "api-service",
+    ttl: "10s",
+  });
+  agentToken.addGrant({ video: { agent: true } } as any);
+
+  const job = {
+    room: {
+      name: roomName,
+      empty_timeout: 30,
+    },
+    agent: {
+      name: 'design_assistant',
+    },
   };
-  at.addGrant(grant);
-  return at.toJwt();
+
+  const livekitHost = LIVEKIT_URL.replace("wss://", "https://");
+  const url = `${livekitHost}/twirp/livekit.JobService/CreateJob`;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${await agentToken.toJwt()}`,
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(job),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to dispatch agent job: ${response.status} ${errorBody}`);
+  }
+
+  console.log(`Successfully dispatched agent job for room: ${roomName}`);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const roomName = `design-room-${uuidv4()}`;
+    // Use a consistent identity for the user for now.
+    const participantIdentity = `user-jane-doe`;
+
+    // 1. Dispatch a job to an available agent.
+    await dispatchAgentJob(roomName);
+    
+    // 2. Create a token for the user to join the now-active room.
+    const userToken = await createParticipantToken(
+      { identity: participantIdentity },
+      roomName
+    );
+
+    const data = {
+      url: LIVEKIT_URL,
+      roomName,
+      token: userToken,
+      participantName: participantIdentity,
+    };
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error("Error in connection-details API:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return new NextResponse(message, { status: 500 });
+  }
 }
