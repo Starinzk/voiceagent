@@ -40,23 +40,27 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gradient-to-br from-charcoal-start to-charcoal-end text-white">
-      <div className="text-center">
+    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-enso-background font-sans">
+      <div className="text-center max-w-lg mx-auto">
         <Image
           src="/Enso.png"
           alt="Enso Logo"
-          width={150}
-          height={150}
+          width={120}
+          height={120}
           className="mx-auto mb-8"
         />
-        <h1 className="text-5xl font-serif mb-4">Enso</h1>
-        <p className="text-lg text-gray-300 mb-8">Your AI Design Partner</p>
+        <h1 className="text-5xl font-serif text-enso-text mb-4">
+          Think Out Loud. Leave With Clarity.
+        </h1>
+        <p className="text-lg text-enso-text/80 mb-12">
+          Your voice-first design assistant for instant creative clarity.
+        </p>
         <button
           onClick={handleStartSession}
           disabled={isConnecting}
-          className="px-8 py-3 bg-enso-green text-black font-bold rounded-full hover:bg-enso-magenta hover:text-white transition-colors duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+          className="px-12 py-4 bg-enso-card text-enso-text font-bold rounded-full border border-enso-text/10 shadow-md transform hover:scale-105 transition-transform duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-enso-gradient hover:text-white"
         >
-          {isConnecting ? "Connecting..." : "Start Session"}
+          {isConnecting ? "Connecting..." : "Start Your Session"}
         </button>
       </div>
     </main>

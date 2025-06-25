@@ -451,12 +451,41 @@ class BaseAgent(Agent):
             return self
 
         # Update the LLM context for the next agent
-        next_agent.llm.chat_ctx = self.llm.chat_ctx
+        if hasattr(self.llm, 'chat_history'):
+            next_agent.llm.chat_history = self.llm.chat_history
+
+        # Update context for the next agent
+        if context:
+            # Add a system message to the next agent's context
+            sys_msg = ChatMessage(
+                role=ChatMessage.ChatRole.SYSTEM,
+                content=context,
+            )
+            next_agent.llm.chat_history.messages.append(sys_msg)
 
         return next_agent
 
+    def _get_llm_context(self) -> "ChatContext":
+        """
+        Get the LLM context from the current agent.
+
+        Design Decisions:
+        - Prioritize `chat_history` over `chat_ctx` for robust context management
+        - Create a new `ChatContext` if none exists to prevent errors
+
+        Returns:
+            ChatContext: The active chat context for the LLM
+        """
+        if hasattr(self.llm, 'chat_history'):
+            return self.llm.chat_history
+        elif hasattr(self.llm, 'chat_ctx'):
+            return self.llm.chat_ctx
+        return ChatContext()
+
     async def send_user_transcript(self, text: str, is_final: bool):
-        """Sends the user's transcribed text over the data channel with the correct identity."""
+        """
+        Send the user's transcribed text to all other participants in the room
+        """
         if not self.user_data.ctx or not self.user_data.ctx.room:
             print("Warning: Cannot send user transcript, room not available.")
             return
@@ -667,7 +696,7 @@ class DesignStrategistAgent(BaseAgent):
         Provide a greeting and instructions upon entry.
         """
         # Truncate context before the LLM call
-        chat_ctx = self.llm.chat_ctx if hasattr(self.llm, 'chat_ctx') else ChatContext()
+        chat_ctx = self.llm.chat_history if hasattr(self.llm, 'chat_history') else ChatContext()
         
         truncated_messages = self._truncate_chat_ctx(
             chat_ctx.messages,

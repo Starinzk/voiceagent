@@ -82,9 +82,9 @@ export async function GET(req: NextRequest) {
     );
 
     const data = {
-      serverUrl: LIVEKIT_URL,
+      url: LIVEKIT_URL,
       roomName,
-      participantToken: userToken,
+      token: userToken,
       participantName: participantIdentity,
     };
 
