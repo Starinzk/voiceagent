@@ -1,9 +1,0 @@
-feat: Revert to stable multi-agent workflow
-
-Reverts the experimental session-loading feature to restore the application to a known-good state.
-
-- Removes all session-loading logic from the codebase and prompts.
-- Simplifies the DesignCoachAgent to a two-step process: identify user, then capture design challenge.
-- Stabilizes the agent tool architecture by ensuring all tools on a given agent have compatible return types, resolving the underlying framework conflicts.
-
-This commit establishes a stable foundation for correctly speccing and re-implementing session persistence as a new feature. 

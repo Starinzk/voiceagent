@@ -1,40 +1,45 @@
 "use client";
+
+import { useSpeakingParticipants } from "@livekit/components-react";
 import { motion } from "framer-motion";
 
 export function Waveform() {
+  const speakingParticipants = useSpeakingParticipants();
+  const isSomeoneSpeaking = speakingParticipants.length > 0;
+
   return (
-    <div className="w-full max-w-2xl h-24 flex items-center justify-center opacity-50">
-      <motion.svg
-        width="100%"
-        height="100%"
-        viewBox="0 0 500 100"
-        preserveAspectRatio="none"
+    <div className="w-full flex justify-center items-center h-10 my-2">
+      <motion.div
+        className="w-full max-w-sm h-1 bg-enso-pink/20"
+        animate={{
+          scaleX: isSomeoneSpeaking ? 1 : 0.8,
+          opacity: isSomeoneSpeaking ? 1 : 0.5,
+        }}
+        transition={{
+          type: "spring",
+          stiffness: 400,
+          damping: 20,
+        }}
       >
-        <defs>
-          <linearGradient id="ensoGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" style={{ stopColor: "#00C800" }} />
-            <stop offset="100%" style={{ stopColor: "#E37ED0" }} />
-          </linearGradient>
-        </defs>
-        <motion.path
-          d="M 0 50 Q 125 25, 250 50 T 500 50"
-          stroke="url(#ensoGradient)"
-          strokeWidth="2"
-          fill="none"
-          animate={{
-            d: [
-              "M 0 50 Q 125 25, 250 50 T 500 50",
-              "M 0 50 Q 125 75, 250 50 T 500 50",
-              "M 0 50 Q 125 25, 250 50 T 500 50",
-            ],
+        <motion.div
+          className="w-full h-full bg-gradient-to-r from-enso-pink to-enso-green"
+          style={{
+            transformOrigin: "center",
           }}
-          transition={{
-            duration: 4,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
+          animate={
+            isSomeoneSpeaking
+              ? {
+                  scaleX: [1, 0.9, 1.1, 0.95, 1],
+                  transition: {
+                    duration: 1,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                  },
+                }
+              : { scaleX: 1 }
+          }
         />
-      </motion.svg>
+      </motion.div>
     </div>
   );
 } 

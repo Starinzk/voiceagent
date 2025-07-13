@@ -29,7 +29,7 @@ from datetime import datetime
 from typing import Dict, Any
 from dotenv import load_dotenv
 from design_assistant.design_database import DesignDatabase
-from design_assistant.design_assistant import UserData
+from design_assistant.user_data import UserData
 
 # Load environment variables
 load_dotenv()

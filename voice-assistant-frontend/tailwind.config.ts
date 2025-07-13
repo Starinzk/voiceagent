@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { fontFamily } from "tailwindcss/defaultTheme";
 
 const config: Config = {
   content: [
@@ -9,20 +10,19 @@ const config: Config = {
   ],
   theme: {
     extend: {
-      colors: {
-        "enso-green": "#00C800",
-        "enso-pink": "#E37ED0",
-        "enso-background": "#f9f9f9",
-        "enso-text": "#1a1a1a",
-        "enso-card": "#ffffff",
-        "enso-card-bg": "#f2f2f2",
-      },
       fontFamily: {
-        serif: ["Playfair Display", "Georgia", "serif"],
-        sans: ["Inter", "Helvetica Neue", "sans-serif"],
+        sans: ["var(--font-inter)", ...fontFamily.sans],
+        serif: ["var(--font-playfair)", "Georgia", "serif"],
+      },
+      colors: {
+        "enso-background": "#F5F5F5",
+        "enso-text": "#333333",
+        "enso-card": "#FFFFFF",
+        "enso-pink": "#FFD5E5",
+        "enso-green": "#B4FFD5",
       },
       backgroundImage: {
-        "enso-gradient": "linear-gradient(to right, #00C800, #E37ED0)",
+        "enso-gradient": "linear-gradient(135deg, #FFD5E5 0%, #B4FFD5 100%)",
       },
     },
   },

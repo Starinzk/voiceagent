@@ -1,69 +1,69 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { Participant } from "livekit-client";
+import { useMemo, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { formatAgentName } from "../lib/utils";
+import { useCombinedTranscriptions, CustomChatMessage } from "@/hooks/useCombinedTranscriptions";
 
-export interface CustomChatMessage {
-  id: string;
-  from: {
-    identity: string;
-    name: string;
-  };
-  message: string;
-  timestamp: number;
-}
-
-const ChatBubble = ({ msg }: { msg: CustomChatMessage }) => {
-  const isAgent = !msg.from.identity.startsWith("user-");
-  const bubbleAlignment = isAgent ? "self-start" : "self-end";
-  const bubbleBg = isAgent ? "bg-enso-card-bg" : "bg-enso-card";
-  const bubbleTextColor = "text-enso-text";
-
-  const time = new Date(msg.timestamp).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
-      className={`w-full flex ${isAgent ? "justify-start" : "justify-end"}`}
-    >
-      <div
-        className={`relative max-w-lg rounded-2xl py-3 px-5 m-2 shadow-sm ${bubbleBg} ${bubbleTextColor}`}
-      >
-        <p className="font-sans pr-12">{msg.message}</p>
-        <span className="absolute top-3 right-4 text-xs text-enso-text/40">
-          {time}
-        </span>
-      </div>
-    </motion.div>
-  );
-};
+const AGENT_IDENTITIES = [
+  "design_coach",
+  "design_strategist",
+  "design_evaluator",
+];
 
 export default function TranscriptionView({
   chatMessages,
 }: {
   chatMessages: CustomChatMessage[];
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+  const messageGroups = useMemo(() => {
+    // This is a simple implementation that can be improved.
+    return chatMessages;
   }, [chatMessages]);
 
+  const messagesEndRef = useRef<null | HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messageGroups]);
+
   return (
-    <div
-      ref={scrollRef}
-      className="w-full h-full flex flex-col space-y-2 p-4 overflow-y-auto"
-    >
-      {chatMessages.map((msg) => (
-        <ChatBubble key={msg.id} msg={msg} />
-      ))}
+    <div className="flex-grow flex flex-col overflow-y-auto p-4 space-y-4 bg-white/50 rounded-lg shadow-inner">
+      <AnimatePresence>
+        {messageGroups.map((msg) => {
+          if (!msg.from?.identity) return null; // Defensive check
+
+          const isAgent = AGENT_IDENTITIES.includes(msg.from.identity);
+          const agentName = isAgent ? formatAgentName(msg.from.identity) : "You";
+
+          return (
+            <motion.div
+              key={msg.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className={`flex flex-col w-full ${
+                isAgent ? "items-start" : "items-end"
+              }`}
+            >
+              <p className="font-bold text-sm px-4 py-1">
+                {agentName}
+              </p>
+              <div
+                className={`w-fit max-w-xl px-4 py-3 rounded-2xl ${
+                  isAgent
+                    ? "bg-white/80 text-gray-800 rounded-bl-none"
+                    : "bg-blue-500 text-white rounded-br-none"
+                }`}
+              >
+                <p className="text-base">{msg.message}</p>
+              </div>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+      <div ref={messagesEndRef} />
     </div>
   );
 }
