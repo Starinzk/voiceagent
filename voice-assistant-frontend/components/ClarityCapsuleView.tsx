@@ -59,7 +59,7 @@ ${capsule.next_steps.map((s, i) => `${i + 1}. ${s}`).join('\\n')}
       
       <section className="mb-6">
         <h2 className="text-2xl font-serif mb-3 text-enso-text/80">Problem Statement</h2>
-        <p className="text-lg bg-gray-100 p-4 rounded-lg">"{capsule.problem_statement}"</p>
+        <p className="text-lg bg-gray-100 p-4 rounded-lg">&ldquo;{capsule.problem_statement}&rdquo;</p>
       </section>
 
       <section className="mb-6">

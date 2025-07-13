@@ -1,10 +1,9 @@
 "use client";
 
-import { Participant } from "livekit-client";
 import { useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatAgentName } from "../lib/utils";
-import { useCombinedTranscriptions, CustomChatMessage } from "@/hooks/useCombinedTranscriptions";
+import { CustomChatMessage } from "@/hooks/useCombinedTranscriptions";
 
 const AGENT_IDENTITIES = [
   "design_coach",

@@ -1,0 +1,22 @@
+{
+  "buildCommand": "cd voice-assistant-frontend && pnpm install && pnpm build",
+  "outputDirectory": "voice-assistant-frontend/.next",
+  "framework": "nextjs",
+  "installCommand": "cd voice-assistant-frontend && pnpm install",
+  "devCommand": "cd voice-assistant-frontend && pnpm dev",
+  "rootDirectory": "voice-assistant-frontend",
+  "env": {
+    "LIVEKIT_URL": "@livekit_url",
+    "LIVEKIT_API_KEY": "@livekit_api_key", 
+    "LIVEKIT_API_SECRET": "@livekit_api_secret",
+    "NEXT_PUBLIC_SUPABASE_URL": "@next_public_supabase_url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@next_public_supabase_anon_key",
+    "NEXT_PUBLIC_CONN_DETAILS_ENDPOINT": "/api/connection-details",
+    "OPENAI_API_KEY": "@openai_api_key"
+  },
+  "functions": {
+    "voice-assistant-frontend/app/api/connection-details/route.ts": {
+      "maxDuration": 10
+    }
+  }
+} 

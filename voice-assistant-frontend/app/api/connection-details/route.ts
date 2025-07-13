@@ -1,5 +1,5 @@
-import { AccessToken, AccessTokenOptions, VideoGrant } from "livekit-server-sdk";
-import { NextRequest, NextResponse } from "next/server";
+import { AccessToken, AccessTokenOptions } from "livekit-server-sdk";
+import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 
 // NOTE: you are expected to define the following environment variables in `.env.local`:
@@ -33,6 +33,7 @@ async function dispatchAgentJob(roomName: string) {
     identity: "api-service",
     ttl: "10s",
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   agentToken.addGrant({ video: { agent: true } } as any);
 
   const job = {
@@ -66,7 +67,7 @@ async function dispatchAgentJob(roomName: string) {
   console.log(`Successfully dispatched agent job for room: ${roomName}`);
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const roomName = `design-room-${uuidv4()}`;
     // Use a consistent identity for the user for now.

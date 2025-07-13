@@ -7,40 +7,24 @@ import {
   TrackToggle,
   DisconnectButton,
   useRoomContext,
-  useIsSpeaking,
 } from "@livekit/components-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Room,
-  RoomEvent,
-  DataPacket_Kind,
-  RemoteParticipant,
   Participant,
   Track,
 } from "livekit-client";
 import { AgentOrb } from "./AgentOrb";
 import TranscriptionView from "./TranscriptionView";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useCombinedTranscriptions } from "../hooks/useCombinedTranscriptions";
 import { NoAgentNotification } from "./NoAgentNotification";
-import { CloseIcon } from "./CloseIcon";
 import { Waveform } from "./Waveform";
 import { useAgentState } from "../hooks/useAgentState";
 import { LoopNotice } from "./LoopNotice";
 import { AgentBreadcrumbs } from "./AgentBreadcrumbs";
 import { ClarityCapsule, ClarityCapsuleView } from "./ClarityCapsuleView";
 import { useDataChannel } from "../hooks/useDataChannel";
-
-const AGENT_IDENTITIES = [
-  "design_coach",
-  "design_strategist",
-  "design_evaluator",
-];
-
-// A simple utility to format the agent name for display
-function formatAgentName(name: string): string {
-  return name.replace(/Agent$/, "").trim();
-}
 
 function LiveSessionContent({ onDisconnect }: { onDisconnect: () => void }) {
   const participants = useParticipants();
