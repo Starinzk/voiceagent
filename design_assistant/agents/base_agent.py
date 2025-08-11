@@ -22,13 +22,24 @@ from livekit.agents.voice import RunContext as RunContext_T
 
 class BaseAgent(Agent):
     '''Base class for all agents in the design workflow.'''
-    def __init__(
-        self,
-        *,
-        instructions: str,
-    ):
+    def __init__(self, *, instructions: str, name: str = None):
         super().__init__(instructions=instructions)
         self._agent_name: str = self.__class__.__name__
+        if name:
+            self._agent_name = name
+        
+        # Convert class name to frontend format (e.g., DesignCoachAgent -> design_coach)
+        self._frontend_identity = self._convert_class_name_to_identity(self._agent_name)
+    
+    def _convert_class_name_to_identity(self, class_name: str) -> str:
+        """Convert class name like 'DesignCoachAgent' to 'design_coach'"""
+        # Remove 'Agent' suffix and convert to snake_case
+        name = class_name.replace('Agent', '')
+        # Convert CamelCase to snake_case
+        import re
+        snake_case = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+        snake_case = re.sub('([a-z0-9])([A-Z])', r'\1_\2', snake_case)
+        return snake_case.lower()
 
     def _set_agent_name(self, name: str):
         self._agent_name = name
@@ -70,12 +81,16 @@ class BaseAgent(Agent):
             await self.user_data.agent_session.say(text_or_stream)
         else:
             # Complex case: a stream of text chunks
+            full_text = ""
             async def transcript_stream_iterator():
+                nonlocal full_text
                 async for chunk in self._llm_stream_to_str_stream(text_or_stream):
+                    full_text += chunk
                     await self._send_agent_transcript(chunk, is_final=False)
                     yield chunk
-                # Send a final empty message to signal the end of the transcript
-                await self._send_agent_transcript("", is_final=True)
+                # Send the complete text as final message instead of empty string
+                if full_text.strip():
+                    await self._send_agent_transcript(full_text, is_final=True)
 
             await self.user_data.agent_session.say(transcript_stream_iterator())
 
@@ -85,11 +100,15 @@ class BaseAgent(Agent):
             print("Warning: Agent has no active session or room, cannot send data.")
             return
 
+        # Don't send empty messages
+        if not text or text.strip() == "":
+            return
+
         chat_message = {
             "message": text,
             "is_final": is_final,
             "from": {
-                "identity": self._agent_name or "design_agent",
+                "identity": self._frontend_identity or "design_agent",
                 "name": self._agent_name or "Design Agent",
             },
             "timestamp": int(datetime.now().timestamp() * 1000),

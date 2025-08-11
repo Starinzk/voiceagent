@@ -324,15 +324,12 @@ cd voiceagent
 
 You need to run both the backend and frontend servers simultaneously in separate terminal windows.
 
-1.  **Run the Backend Server:**
-    *   Open a terminal.
-    *   Navigate to `design_assistant/`.
-    *   Ensure your virtual environment is activated (`source venv/bin/activate`).
-    *   Run:
+1.  **Run the Backend Worker (from repo root):**
+    *   Open a terminal at the repository root and run:
         ```bash
-        python3 design_assistant.py dev
+        design_assistant/venv/bin/python -m design_assistant.main
         ```
-    *   Keep this terminal window running.
+    *   This avoids Python package import issues.
 
 2.  **Run the Frontend Server:**
     *   Open a *new* terminal window.

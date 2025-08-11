@@ -71,17 +71,28 @@ NEXT_PUBLIC_CONN_DETAILS_ENDPOINT=/api/connection-details
 
 ### Option A: Railway
 1. Go to [railway.app](https://railway.app)
-2. Connect your GitHub repository
-3. Select the `design_assistant` folder
-4. Add environment variables
-5. Deploy
+2. New Project → Deploy from GitHub → select this repo
+3. Service root: `design_assistant`
+4. If using Docker: add service from `design_assistant/Dockerfile` (recommended)
+5. Otherwise, set Build/Start:
+   - Build: `pip install -r requirements.txt`
+   - Start: `python -m design_assistant.main`
+6. Add environment variables (same as local `.env`):
+   - `OPENAI_API_KEY`
+   - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+   - `SUPABASE_URL`, `SUPABASE_KEY` (service role)
+   - `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`
+7. Deploy
 
 ### Option B: Render
 1. Go to [render.com](https://render.com)
-2. Create a new Web Service
-3. Connect your repository
-4. Set build command: `cd design_assistant && pip install -r requirements.txt`
-5. Set start command: `cd design_assistant && python main.py`
+2. Create a new Web Service → connect repository
+3. Root directory: `design_assistant`
+4. If using Docker: Auto-detect `design_assistant/Dockerfile`
+5. Otherwise:
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `python -m design_assistant.main`
+6. Environment: same keys as Railway section
 
 ### Option C: Your Own Server
 Deploy using Docker, PM2, or your preferred method.
@@ -90,6 +101,8 @@ Deploy using Docker, PM2, or your preferred method.
 
 ### 4.1 Update API Endpoints
 If your backend is deployed separately, update any API calls in your frontend to point to the backend URL.
+
+For this project: the frontend only calls LiveKit JobService and uses LiveKit Cloud; the Python worker connects to LiveKit directly. No backend HTTP endpoint is required for the UI.
 
 ### 4.2 CORS Configuration
 Ensure your Python backend allows requests from your Vercel domain:
@@ -109,9 +122,9 @@ ALLOWED_ORIGINS = [
 3. Check browser console for errors
 
 ### 5.2 Backend Integration
-1. Test voice functionality
-2. Verify agent responses
-3. Check database connections
+1. Verify worker registers with LiveKit (Railway/Render logs)
+2. Test voice functionality via frontend session
+3. Check Supabase connections
 
 ### 5.3 LiveKit Integration
 1. Test room creation

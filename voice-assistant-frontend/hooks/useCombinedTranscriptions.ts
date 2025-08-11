@@ -1,11 +1,11 @@
 import { useState, useCallback, useMemo } from "react";
 import { useDataChannel } from "@livekit/components-react";
 import { nanoid } from "nanoid";
-import { Participant } from "livekit-client";
 
+export interface ChatFrom { identity: string; name?: string }
 export interface CustomChatMessage {
   id: string;
-  from?: Participant;
+  from?: ChatFrom;
   message: string;
   timestamp: number;
 }
@@ -20,6 +20,11 @@ export const useCombinedTranscriptions = () => {
       const msg = JSON.parse(rawMsg);
 
       if (msg.type === "context" || msg.type === "agent_state" || msg.type === "clarity_capsule") {
+        return;
+      }
+
+      // Skip empty messages
+      if (!msg.message || msg.message.trim() === "") {
         return;
       }
 
@@ -41,10 +46,8 @@ export const useCombinedTranscriptions = () => {
           return [
             ...currentMessages,
             {
-              id: msg.is_final
-                ? `final-${nanoid()}`
-                : `interim-${nanoid()}`,
-              from: msg.from,
+              id: msg.is_final ? `final-${nanoid()}` : `interim-${nanoid()}`,
+              from: msg.from as ChatFrom | undefined,
               message: msg.message,
               timestamp: msg.timestamp,
             },

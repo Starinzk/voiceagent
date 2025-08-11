@@ -25,6 +25,16 @@ Dependencies:
 
 import os
 import pytest
+
+# Skip these integration tests unless explicitly enabled. They require
+# valid Supabase credentials and network access.
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_SUPABASE_TESTS") != "1",
+    reason="Set RUN_SUPABASE_TESTS=1 with valid Supabase env vars to run integration tests.",
+)
+
+import os
+import pytest
 from datetime import datetime
 from typing import Dict, Any
 from dotenv import load_dotenv
@@ -329,14 +339,14 @@ def test_get_or_create_user(db: DesignDatabase, test_user_data: Dict[str, Any]) 
         test_user_data: Test user information
     """
     # Create a new user
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
     assert user_id is not None
     
     # Try to get the same user again
-    same_user_id = db.get_or_create_user(
+    same_user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -357,7 +367,7 @@ def test_create_design_session(db: DesignDatabase, test_user_data: Dict[str, Any
         test_session_data: Test session information
     """
     # First create a user
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -386,7 +396,7 @@ def test_update_session(db: DesignDatabase, test_user_data: Dict[str, Any], test
         test_session_data: Test session information
     """
     # Create user and session
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -422,7 +432,7 @@ def test_add_design_iteration(db: DesignDatabase, test_user_data: Dict[str, Any]
         test_iteration_data: Test iteration information
     """
     # Create user and session
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -458,7 +468,7 @@ def test_add_feedback(db: DesignDatabase, test_user_data: Dict[str, Any],
         test_feedback_data: Test feedback information
     """
     # Create user and session
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -491,7 +501,7 @@ def test_get_user_sessions(db: DesignDatabase, test_user_data: Dict[str, Any], t
         test_session_data: Test session information
     """
     # Create user and multiple sessions
-    user_id = db.get_or_create_user(
+    user_id, _ = db.get_or_create_user(
         test_user_data["first_name"],
         test_user_data["last_name"]
     )
@@ -659,7 +669,7 @@ def test_data_validation_errors(db, sample_user_data):
         db.get_or_create_user("", "")  # Empty names
     
     # Test invalid session data
-    user_id = db.get_or_create_user("Test", "User")
+    user_id, _ = db.get_or_create_user("Test", "User")
     with pytest.raises(ValueError):
         db.create_design_session(
             user_id=user_id,

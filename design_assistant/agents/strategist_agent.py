@@ -45,7 +45,7 @@ class DesignStrategistAgent(BaseAgent):
 
         # Generate the introductory message
         # Access the llm via the agent_session on user_data
-        stream = self.user_data.agent_session.llm.chat(chat_ctx=temp_ctx)
+        stream = await self.user_data.agent_session.llm.chat(chat_ctx=temp_ctx)
         await self.speak(stream)
 
     @function_tool

@@ -23,20 +23,25 @@ export const useAgentState = () => {
   useEffect(() => {
     const handleDataReceived = (
       payload: Uint8Array,
-      p?: RemoteParticipant,
+      _p?: RemoteParticipant,
+      _kind?: DataPacket_Kind,
+      topic?: string,
     ) => {
-      // We are interested in data packets from the agent.
-      // This is a simple check, a more robust solution might involve
-      // checking participant metadata or a specific topic.
-      if (p?.identity.startsWith('agent-')) {
-        const decoder = new TextDecoder();
-        const jsonStr = decoder.decode(payload);
-        try {
-          const newState = JSON.parse(jsonStr) as AgentState;
-          setAgentState(newState);
-        } catch (e) {
-          console.error('Failed to parse agent state from data packet', e);
+      if (topic !== 'lk-chat-topic') return;
+      try {
+        const jsonStr = new TextDecoder().decode(payload);
+        const data = JSON.parse(jsonStr);
+        if (data?.type === 'agent_state') {
+          const nextState: AgentState = {
+            current_agent_name: data.current_agent_name,
+            agent_sequence: Array.isArray(data.agent_sequence) ? data.agent_sequence : [],
+            loop_reason: data.loop_reason ?? null,
+            loop_counts: typeof data.loop_counts === 'object' && data.loop_counts !== null ? data.loop_counts : {},
+          };
+          setAgentState(nextState);
         }
+      } catch (e) {
+        console.error('Failed to parse agent state from data packet', e);
       }
     };
 
