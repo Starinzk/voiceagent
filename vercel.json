@@ -4,7 +4,6 @@
   "framework": "nextjs",
   "installCommand": "cd voice-assistant-frontend && pnpm install",
   "devCommand": "cd voice-assistant-frontend && pnpm dev",
-  "rootDirectory": "voice-assistant-frontend",
   "env": {
     "LIVEKIT_URL": "@livekit_url",
     "LIVEKIT_API_KEY": "@livekit_api_key", 
