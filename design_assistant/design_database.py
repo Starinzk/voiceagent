@@ -32,10 +32,10 @@ from supabase import create_client, Client
 from supabase._sync.client import SupabaseException
 from postgrest.exceptions import APIError
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 
 if TYPE_CHECKING:
-    from design_assistant.design_assistant import UserData
+    from design_assistant.user_data import UserData, ClarityCapsule
 
 logger = logging.getLogger("design-assistant-db")
 logger.setLevel(logging.INFO)
@@ -133,6 +133,16 @@ class DesignDatabase:
             return user_id, True
         except APIError as e:
             raise ValueError(f"Failed to get or create user: {str(e)}")
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a user from the database by their ID."""
+        self._validate_uuid(user_id)
+        try:
+            response = self.client.table('users').select('*').eq('id', user_id).single().execute()
+            return response.data
+        except APIError as e:
+            logger.error(f"Error retrieving user by ID {user_id}: {e}")
+            return None
 
     def create_design_session(self, user_id: str, design_challenge: str, target_users: List[str], emotional_goals: List[str], status: str) -> str:
         """
@@ -442,59 +452,83 @@ class DesignDatabase:
 
     def load_user_data(self, session_id: str) -> "UserData":
         """
-        Loads the state of a design session from the database into a UserData object.
-
-        This method retrieves a session, its associated user, iterations, and
-        feedback from the database and reconstructs a UserData object from it.
-
-        Args:
-            session_id (str): The UUID of the design session to load.
-
-        Returns:
-            UserData: An instance of UserData populated with the loaded state.
-
-        Raises:
-            ValueError: If the session ID is invalid, or if the session or its
-                        associated user cannot be found.
+        Load all data for a given session_id from the database and reconstruct
+        the UserData object.
         """
-        self._validate_uuid(session_id)
-        
+        logger.info(f"--- Loading UserData for session_id: {session_id} ---")
         try:
-            # Get session details
-            session = self.get_session_details(session_id)
-            if not session:
-                raise ValueError("Session not found")
+            # 1. Get session data
+            session_data = self.get_session_details(session_id)
+            if not session_data:
+                raise ValueError(f"No session found with ID: {session_id}")
+            logger.debug(f"Loaded session data: {session_data}")
+
+            # 2. Get user data from user_id in session
+            user_id = session_data.get('user_id')
+            if not user_id:
+                raise ValueError("Session data is missing 'user_id'")
             
-            # Get user details
-            user = self.client.table('users').select('*').eq('id', session['user_id']).single().execute()
-            if not user.data:
-                raise ValueError("User not found")
+            logger.debug(f"Looking up user with ID: {user_id}")
+            user_info = self.get_user_by_id(user_id)
+            if not user_info:
+                raise ValueError(f"No user found with ID: {user_id}")
+            logger.debug(f"Loaded user info: {user_info}")
+
+            # 3. Get design iterations
+            iterations = self.client.table('design_iterations').select('*').eq('session_id', session_id).execute().data or []
+            logger.debug(f"Loaded {len(iterations)} design iterations.")
+
+            # 4. Get feedback history
+            feedback = self.client.table('feedback_history').select('*').eq('session_id', session_id).execute().data or []
+            logger.debug(f"Loaded {len(feedback)} feedback entries.")
             
-            # Get iterations and feedback
-            iterations = self.client.table('design_iterations').select('*').eq('session_id', session_id).execute()
-            feedback = self.client.table('feedback_history').select('*').eq('session_id', session_id).execute()
+            # 5. Reconstruct UserData object
+            # Start with empty UserData to avoid issues with missing fields
+            from design_assistant.user_data import UserData
             
-            # Create new UserData instance
-            from design_assistant.design_assistant import UserData
-            user_data = UserData(
-                first_name=user.data['first_name'],
-                last_name=user.data['last_name'],
-                user_id=user.data['id'],
-                design_challenge=session['design_challenge'],
-                target_users=session.get('target_users', []),
-                emotional_goals=session.get('emotional_goals', []),
-                status=session['status'],
-                proposed_solution=session.get('proposed_solution'),
-                design_iterations=[{
-                    'problem_statement': i['problem_statement'],
-                    'solution': i['solution']
-                } for i in iterations.data],
-                feedback_history=[f['feedback_data'] for f in feedback.data],
-                personas=session.get('personas', {}),
-                ctx=session.get('ctx'),
-                db=self
-            )
-            
-            return user_data
-        except APIError as e:
-            raise ValueError(f"Failed to load user data: {str(e)}") 
+            loaded_user_data = UserData()
+
+            # Populate fields from the database records
+            loaded_user_data.user_id = user_id
+            loaded_user_data.first_name = user_info.get('first_name')
+            loaded_user_data.last_name = user_info.get('last_name')
+
+            # Populate session-related fields
+            for key, value in session_data.items():
+                if hasattr(loaded_user_data, key):
+                    # Handle JSON data that needs to be parsed
+                    if key in ['target_users', 'emotional_goals', 'loop_counts', 'agent_sequence'] and isinstance(value, str):
+                        try:
+                            setattr(loaded_user_data, key, json.loads(value))
+                        except json.JSONDecodeError:
+                            logger.warning(f"Could not decode JSON for field {key}: {value}")
+                            setattr(loaded_user_data, key, value) # or a default value
+                    else:
+                        setattr(loaded_user_data, key, value)
+
+            loaded_user_data.design_iterations = iterations
+            loaded_user_data.feedback_history = feedback
+
+            # Reconstruct ClarityCapsule if present
+            if session_data.get('clarity_capsule'):
+                capsule_data = session_data['clarity_capsule']
+                if isinstance(capsule_data, str):
+                    try:
+                        capsule_data = json.loads(capsule_data)
+                    except json.JSONDecodeError:
+                        capsule_data = {}
+                
+                # Filter capsule_data to only include fields expected by ClarityCapsule
+                capsule_fields = {f.name for f in fields(ClarityCapsule)}
+                filtered_capsule_data = {k: v for k, v in capsule_data.items() if k in capsule_fields}
+
+                from design_assistant.user_data import ClarityCapsule
+                loaded_user_data.clarity_capsule = ClarityCapsule(**filtered_capsule_data)
+
+
+            logger.info(f"--- Successfully loaded and reconstructed UserData for session_id: {session_id} ---")
+            return loaded_user_data
+
+        except (APIError, ValueError) as e:
+            logger.error(f"Error loading user data for session {session_id}: {e}", exc_info=True)
+            raise ValueError(f"Failed to load user data: {e}")

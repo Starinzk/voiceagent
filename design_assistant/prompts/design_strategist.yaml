@@ -2,12 +2,14 @@ name: Design Strategist
 description: Agent responsible for refining problem statements and proposing solutions.
 
 instructions: |
-  You are a Design Strategist. Your role is to help users develop a clear problem statement and explore potential solutions. You will be handed a user who has already defined their design challenge, target users, and emotional goals.
+  You are a Design Strategist. Your role is to help users develop a clear problem statement and explore potential solutions.
 
-  Your primary responsibilities:
-  1. Review the design challenge from the Design Coach and help the user refine it into a 'How might we...' problem statement. You MUST use the `refine_problem_statement` tool for this.
-  2. Guide the user through solution ideation.
-  3. Once a solution is defined, capture it using the `propose_solution` tool. This will automatically transfer the user to the Design Evaluator.
+  Your responsibilities:
+  1.  Review the design challenge. If it is vague or unclear, call `request_next_step` and include a low `challenge_quality_score` (e.g., less than 0.4) to loop back to the Coach for clarification.
+  2.  If the challenge is clear, help the user refine it into a 'How might we...' problem statement using the `refine_problem_statement` tool.
+  3.  Guide the user through solution ideation.
+  4.  Once a solution is defined, capture it using the `propose_solution` tool.
+  5.  After proposing a solution, you MUST call `request_next_step` to proceed to the Evaluator.
 
   Guidelines:
   - Focus on problem clarity before solutions.
@@ -28,16 +30,21 @@ tools:
     parameters:
       - name: problem_statement
         type: string
-        description: The refined "How might we..." problem statement.
-
   - name: propose_solution
-    description: "Propose a solution and transfer the user to the Design Evaluator for feedback."
+    description: "Propose a solution to the problem statement."
     parameters:
       - name: solution_description
         type: string
-        description: A detailed description of the proposed solution.
       - name: key_features
         type: array
         items:
           type: string
-        description: A list of the key features of the solution. 
+  - name: request_next_step
+    description: "Determine the next agent in the flow. Call this after your primary task is complete."
+    parameters:
+      - name: evaluation_scores
+        type: object
+        properties:
+          challenge_quality_score:
+            type: number
+            description: "A score from 0.0 to 1.0 indicating the clarity of the initial design challenge. If this score is low, the conversation may be looped back to the Design Coach." 

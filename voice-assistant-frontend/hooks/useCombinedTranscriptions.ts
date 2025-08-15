@@ -1,21 +1,17 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useDataChannel } from "@livekit/components-react";
 import { nanoid } from "nanoid";
 
+export interface ChatFrom { identity: string; name?: string }
 export interface CustomChatMessage {
   id: string;
-  from?: {
-    identity?: string;
-    name?: string;
-  };
+  from?: ChatFrom;
   message: string;
   timestamp: number;
-  is_final: boolean;
 }
 
 export const useCombinedTranscriptions = () => {
   const [chatMessages, setChatMessages] = useState<CustomChatMessage[]>([]);
-  const activeMessageIdRef = useRef<string | null>(null);
 
   const onDataMessage = useCallback((packet: any) => {
     const decoder = new TextDecoder();
@@ -23,37 +19,39 @@ export const useCombinedTranscriptions = () => {
     try {
       const msg = JSON.parse(rawMsg);
 
+      if (msg.type === "context" || msg.type === "agent_state" || msg.type === "clarity_capsule") {
+        return;
+      }
+
+      // Skip empty messages
+      if (!msg.message || msg.message.trim() === "") {
+        return;
+      }
+
       setChatMessages((currentMessages) => {
-        if (msg.is_final) {
-          if (activeMessageIdRef.current) {
-            const newMessages = currentMessages.map((m) =>
-              m.id === activeMessageIdRef.current
-                ? { ...msg, id: m.id, is_final: true }
-                : m
-            );
-            activeMessageIdRef.current = null;
-            return newMessages;
-          } else {
-            return [
-              ...currentMessages,
-              { ...msg, id: nanoid(), is_final: true },
-            ];
-          }
+        const lastMessage = currentMessages[currentMessages.length - 1];
+
+        if (
+          !msg.is_final &&
+          lastMessage &&
+          lastMessage.from?.identity === msg.from.identity &&
+          !lastMessage.id.startsWith("final-")
+        ) {
+          return currentMessages.map((m, i) =>
+            i === currentMessages.length - 1
+              ? { ...m, message: m.message + msg.message }
+              : m
+          );
         } else {
-          if (activeMessageIdRef.current) {
-            return currentMessages.map((m) =>
-              m.id === activeMessageIdRef.current
-                ? { ...m, message: m.message + msg.message }
-                : m
-            );
-          } else {
-            const newId = nanoid();
-            activeMessageIdRef.current = newId;
-            return [
-              ...currentMessages,
-              { ...msg, id: newId, is_final: false },
-            ];
-          }
+          return [
+            ...currentMessages,
+            {
+              id: msg.is_final ? `final-${nanoid()}` : `interim-${nanoid()}`,
+              from: msg.from as ChatFrom | undefined,
+              message: msg.message,
+              timestamp: msg.timestamp,
+            },
+          ];
         }
       });
     } catch (e) {
@@ -63,5 +61,7 @@ export const useCombinedTranscriptions = () => {
 
   useDataChannel("lk-chat-topic", onDataMessage);
 
-  return { chatMessages };
+  return useMemo(() => {
+    return { chatMessages };
+  }, [chatMessages]);
 };
