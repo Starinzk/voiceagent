@@ -33,8 +33,7 @@ async function dispatchAgentJob(roomName: string) {
     identity: "api-service",
     ttl: "10s",
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agentToken.addGrant({ video: { agent: true } } as any);
+  agentToken.addGrant({ video: { agent: true } } as { video: { agent: boolean } });
 
   const job = {
     room: {
