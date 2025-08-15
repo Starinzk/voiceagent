@@ -4,7 +4,7 @@
     "builder": "nixpacks"
   },
   "deploy": {
-    "startCommand": "python -m design_assistant.main",
+    "startCommand": "python main.py",
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 10
   }
