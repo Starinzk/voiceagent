@@ -15,8 +15,8 @@ from livekit.agents.voice import AgentSession, Agent, RunContext
 from livekit.agents.llm import ChatMessage
 from livekit.plugins import deepgram, openai, silero
 
-from design_assistant.user_data import UserData
-from design_assistant.agents import (
+from user_data import UserData
+from agents import (
     DesignCoachAgent,
     DesignStrategistAgent, 
     DesignEvaluatorAgent

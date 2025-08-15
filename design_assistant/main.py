@@ -15,9 +15,9 @@ from dotenv import load_dotenv
 
 from livekit.agents import JobContext, WorkerOptions, WorkerType, cli, WorkerPermissions, JobRequest
 
-from design_assistant.user_data import UserData
-from design_assistant.session import DesignSession  
-from design_assistant.design_database import DesignDatabase
+from user_data import UserData
+from session import DesignSession  
+from design_database import DesignDatabase
 
 # Load environment variables
 load_dotenv()

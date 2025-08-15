@@ -15,7 +15,7 @@ from typing import Optional, AsyncIterable
 
 from livekit.agents.llm import ChatContext, function_tool, ChatMessage
 from livekit.agents.voice import Agent, RunContext
-from design_assistant.design_utils import load_prompt
+from design_utils import load_prompt
 
 # Define a generic type for the RunContext for cleaner type hinting
 from livekit.agents.voice import RunContext as RunContext_T
