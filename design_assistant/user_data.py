@@ -16,7 +16,7 @@ from livekit.agents.voice import Agent, AgentSession
 # Forward declaration for type hints - will need to import DesignDatabase
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from design_assistant.design_database import DesignDatabase
+    from design_database import DesignDatabase
 
 @dataclass
 class ClarityCapsule:

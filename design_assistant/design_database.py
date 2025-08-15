@@ -35,7 +35,7 @@ import json
 from dataclasses import asdict, fields
 
 if TYPE_CHECKING:
-    from design_assistant.user_data import UserData, ClarityCapsule
+    from user_data import UserData, ClarityCapsule
 
 logger = logging.getLogger("design-assistant-db")
 logger.setLevel(logging.INFO)
@@ -484,7 +484,7 @@ class DesignDatabase:
             
             # 5. Reconstruct UserData object
             # Start with empty UserData to avoid issues with missing fields
-            from design_assistant.user_data import UserData
+            from user_data import UserData
             
             loaded_user_data = UserData()
 
@@ -522,7 +522,7 @@ class DesignDatabase:
                 capsule_fields = {f.name for f in fields(ClarityCapsule)}
                 filtered_capsule_data = {k: v for k, v in capsule_data.items() if k in capsule_fields}
 
-                from design_assistant.user_data import ClarityCapsule
+                from user_data import ClarityCapsule
                 loaded_user_data.clarity_capsule = ClarityCapsule(**filtered_capsule_data)
 
 

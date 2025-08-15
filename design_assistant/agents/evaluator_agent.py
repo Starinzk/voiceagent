@@ -6,13 +6,13 @@ import json
 from livekit.agents.llm import function_tool
 from livekit.agents.voice import RunContext
 from .base_agent import BaseAgent
-from design_assistant.design_utils import load_prompt
+from design_utils import load_prompt
 
 # Define a generic type for the RunContext for cleaner type hinting
 from livekit.agents.voice import RunContext as RunContext_T
 
 # Import ClarityCapsule from the new user_data module
-from design_assistant.user_data import ClarityCapsule
+from user_data import ClarityCapsule
 
 class DesignEvaluatorAgent(BaseAgent):
     '''
