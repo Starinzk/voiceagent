@@ -36,3 +36,4 @@ You'll also need an agent to speak with. Try our [Voice AI Quickstart](https://d
 ## Contributing
 
 This template is open source and we welcome contributions! Please open a PR or issue through GitHub, and don't forget to join us in the [LiveKit Community Slack](https://livekit.io/join-slack)!
+# Force Vercel redeploy Fri Aug 15 16:41:36 PDT 2025
